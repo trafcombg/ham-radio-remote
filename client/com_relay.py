@@ -2,7 +2,10 @@
 
 The other end of the com0com pair is what real CAT software (WSJT-X,
 N1MM+, fldigi) opens. PTT does NOT go through here — see control.py —
-because arbitration has to see it before it reaches the radio.
+because arbitration has to see it before it reaches the radio. Plain CAT
+traffic (e.g. RC-28's frequency-change commands, see client/rc28.py) is
+not arbitrated — it's the same kind of command any CAT app already sends
+through this tunnel — so send_cat()/on_cat_data write/observe it directly.
 """
 
 import asyncio
@@ -21,6 +24,7 @@ class ComRelay:
         self.server_port = server_port
         self.writer = None
         self.serial = None
+        self.on_cat_data = None  # optional callable(bytes) — e.g. RC-28 watching for frequency replies
 
     async def run(self):
         self.serial = serial.Serial(self.com_port, self.baud, timeout=0)
@@ -49,3 +53,10 @@ class ComRelay:
                 log.warning("CAT bridge connection closed")
                 break
             self.serial.write(data)
+            if self.on_cat_data:
+                self.on_cat_data(data)
+
+    async def send_cat(self, data: bytes):
+        if self.writer:
+            self.writer.write(data)
+            await self.writer.drain()

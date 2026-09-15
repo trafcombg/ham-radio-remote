@@ -1,4 +1,4 @@
-# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3
+# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3 + Фаза 4
 
 Клиент-сървър дистанционно управление на Icom радиостанции: CAT bridge
 (виртуален COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
@@ -10,6 +10,39 @@ decode (потвърдено с два независими ctypes wrapper-а �
 decode винаги връща тишина). Засега аудиото е uncompressed PCM вместо
 Opus — за LAN честотната лента не е проблем (~768kbps mono/48kHz), а и
 latency-то е по-ниско без encode/decode. Виж `common/audio_io.py`.
+
+## Какво добавя Фаза 4 към Фаза 3
+
+CW модул + RC-28. **Важно за тестване тук:** нямам paddle, WinKeyer или
+RC-28 хардуер в тази среда, така че тези конкретни пътища не са
+демонстрирани end-to-end — само компилирани/логически проверени.
+
+- Унифициран CW event stream: `common/cw_link.py` — отделен UDP канал
+  per радио (не аудио/CAT), event-driven на сървъра (`loop.add_reader`,
+  не polling) за минимално закъснение
+- CW keying на сървъра използва **същия** `PttArbiter` lock като гласово
+  PTT: първо key-down от свободно радио го "заема" автоматично за
+  потребителя, друг потребител бива тихо игнориран, а lock-ът пада сам
+  1.5s след последния key-up (paddle никога не казва изрично "приключих")
+  — виж self-check-а в `server/radio_bridge.py`
+- CW изходен метод (`cw.method`: civ/rts/dtr) е конфигурируем per радио
+  от admin панела, по подразбиране same-as-PTT (реалистично за повечето
+  радиа — ключуването за CW обикновено е същата физическа линия)
+- Клиентски CW източници (`client/cw/`):
+  - `iambic.py` — Mode A iambic keyer, чиста state machine, **тествана
+    без хардуер** (self-check)
+  - `text_source.py` — текст→Morse, върху `common/morse.py` (тестван)
+  - `straight_key.py` — прав ключ, вкаран в клиентския UI (бутон)
+  - `serial_paddle.py`, `winkeyer.py` — реален paddle през USB-сериен
+    (CTS/DSR) и WinKeyer passthrough — код написан, **не тествано на
+    реален хардуер тук**, пин мапинг/статус байтове могат да се нуждаят
+    от корекция (виж ponytail бележките в самите файлове)
+- RC-28: `client/rc28.py` — dial delta → CI-V смяна на честота. Протоколът
+  на RC-28 НЕ Е документиран (плана изрично го казва) и изисква USB
+  capture (Wireshark+USBPcap) за потвърждение, който нямам тук.
+  `parse_report()` е маркиран като **непотвърден placeholder**; всичко
+  надолу по веригата (delta → нова честота → CI-V set-frequency команда)
+  е тествано и коректно — виж self-check-а и `common/civ.py`.
 
 ## Какво добавя Фаза 3 към Фаза 2
 
@@ -96,11 +129,23 @@ Admin панел: `http://<IP на сървъра>:8080/` от кой да е к
 предупреждение "заето от X" и избор дали да продължиш; ако потвърдиш,
 свързаният клиент вижда ясно съобщение, че радиото е преконфигурирано.
 
+## Тест на CW (без хардуер)
+
+Клиентският CW панел (прав ключ бутон + текст→CW поле) работи с
+клавиатура/мишка, без специален хардуер — задръж "CW ключ" или прати
+текст, провери в server логовете, че `cw_method.set()` (CI-V или RTS/DTR,
+според конфигурацията) реално се вика. За paddle/WinKeyer/RC-28 трябва
+реалният хардуер на потребителя — виж бележките по-горе.
+
 ## Самопроверки (без хардуер/база)
 
 ```bash
-python server/ptt_arbiter.py
-python server/device_registry.py
-python server/db.py
-python common/civ.py
+python -m server.ptt_arbiter
+python -m server.device_registry
+python -m server.db
+python -m server.radio_bridge
+python -m common.civ
+python -m common.morse
+python -m client.cw.iambic
+python -m client.rc28
 ```

@@ -16,5 +16,16 @@
     "server_host": "127.0.0.1",
     "server_port": 5004,
     "local_port": 5005
+  },
+  "cw": {
+    "server_host": "127.0.0.1",
+    "server_port": 5104,
+    "local_port": 5105,
+    "wpm": 20
+  },
+  "rc28": {
+    "enabled": false,
+    "civ_address": 148,
+    "step_hz": 10
   }
 }

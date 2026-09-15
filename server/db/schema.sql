@@ -52,5 +52,9 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     ptt_method TEXT NOT NULL DEFAULT 'civ',
     ptt_civ_address INTEGER,
     ptt_serial_port TEXT,
+    cw_udp_port INTEGER NOT NULL,
+    cw_method TEXT,       -- null = reuse the ptt_* method (same physical key line)
+    cw_civ_address INTEGER,
+    cw_serial_port TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

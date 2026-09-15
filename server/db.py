@@ -40,6 +40,10 @@ def _radio_cfg_to_row(cfg: dict) -> dict:
         "ptt_method": cfg["ptt"]["method"],
         "ptt_civ_address": cfg["ptt"].get("civ_address"),
         "ptt_serial_port": cfg["ptt"].get("serial_port"),
+        "cw_udp_port": cfg["cw_udp_port"],
+        "cw_method": (cfg.get("cw") or {}).get("method"),
+        "cw_civ_address": (cfg.get("cw") or {}).get("civ_address"),
+        "cw_serial_port": (cfg.get("cw") or {}).get("serial_port"),
     }
 
 
@@ -62,6 +66,14 @@ def _row_to_radio_cfg(row) -> dict:
             "method": row["ptt_method"], "civ_address": row["ptt_civ_address"],
             "serial_port": row["ptt_serial_port"],
         },
+        "cw_udp_port": row["cw_udp_port"],
+        "cw": (
+            {
+                "method": row["cw_method"], "civ_address": row["cw_civ_address"],
+                "serial_port": row["cw_serial_port"],
+            }
+            if row["cw_method"] else None
+        ),
     }
 
 
@@ -191,8 +203,9 @@ class PostgresDb:
                 INSERT INTO radio_configs (
                     name, model, cat_vid, cat_pid, cat_serial_number, cat_location, cat_serial_port,
                     cat_baud, cat_tcp_port, control_port, audio_name_contains, audio_endpoint_id,
-                    audio_udp_port, ptt_method, ptt_civ_address, ptt_serial_port, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
+                    audio_udp_port, ptt_method, ptt_civ_address, ptt_serial_port,
+                    cw_udp_port, cw_method, cw_civ_address, cw_serial_port, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now())
                 ON CONFLICT (name) DO UPDATE SET
                     model = EXCLUDED.model, cat_vid = EXCLUDED.cat_vid, cat_pid = EXCLUDED.cat_pid,
                     cat_serial_number = EXCLUDED.cat_serial_number, cat_location = EXCLUDED.cat_location,
@@ -202,12 +215,15 @@ class PostgresDb:
                     audio_endpoint_id = EXCLUDED.audio_endpoint_id,
                     audio_udp_port = EXCLUDED.audio_udp_port, ptt_method = EXCLUDED.ptt_method,
                     ptt_civ_address = EXCLUDED.ptt_civ_address, ptt_serial_port = EXCLUDED.ptt_serial_port,
+                    cw_udp_port = EXCLUDED.cw_udp_port, cw_method = EXCLUDED.cw_method,
+                    cw_civ_address = EXCLUDED.cw_civ_address, cw_serial_port = EXCLUDED.cw_serial_port,
                     updated_at = now()
                 """,
                 r["name"], r["model"], r["cat_vid"], r["cat_pid"], r["cat_serial_number"],
                 r["cat_location"], r["cat_serial_port"], r["cat_baud"], r["cat_tcp_port"],
                 r["control_port"], r["audio_name_contains"], r["audio_endpoint_id"],
                 r["audio_udp_port"], r["ptt_method"], r["ptt_civ_address"], r["ptt_serial_port"],
+                r["cw_udp_port"], r["cw_method"], r["cw_civ_address"], r["cw_serial_port"],
             )
 
     async def delete_radio_config(self, name):

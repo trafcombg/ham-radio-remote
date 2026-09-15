@@ -59,6 +59,16 @@
     </label>
     <label>CI-V адрес (десетично, напр. 148 за 0x94)<input name="civ_address" type="number"></label>
     <label>PTT сериен порт override (празно = същия като CAT)<input name="ptt_serial_port"></label>
+    <label>CW UDP порт<input name="cw_udp_port" type="number" required></label>
+    <label>CW метод (празно = същия като PTT — обичайно за CW-способни радиа)
+      <select name="cw_method">
+        <option value="">(същия като PTT)</option>
+        <option value="civ">CAT команда (CI-V)</option>
+        <option value="rts">RTS линия</option>
+        <option value="dtr">DTR линия</option>
+      </select>
+    </label>
+    <label>CW сериен порт override (празно = същия като CAT)<input name="cw_serial_port"></label>
     <div id="testResult"></div>
     <div style="margin-top:1rem; display:flex; gap:.5rem;">
       <button type="button" id="testBtn" class="secondary">Провери връзка</button>
@@ -136,6 +146,9 @@ function openEdit(r) {
     form.ptt_method.value = r.ptt.method;
     form.civ_address.value = r.ptt.civ_address || "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";
+    form.cw_udp_port.value = r.cw_udp_port;
+    form.cw_method.value = r.cw ? r.cw.method : "";
+    form.cw_serial_port.value = r.cw ? (r.cw.serial_port || "") : "";
   }
   dialog.showModal();
 }
@@ -163,11 +176,17 @@ function formToCfg() {
       endpoint_id: null,
       udp_port: parseInt(f.get("audio_udp_port")),
     },
+    cw_udp_port: parseInt(f.get("cw_udp_port")),
     ptt: {
       method: f.get("ptt_method"),
       civ_address: f.get("civ_address") ? parseInt(f.get("civ_address")) : null,
       serial_port: f.get("ptt_serial_port") || null,
     },
+    cw: f.get("cw_method") ? {
+      method: f.get("cw_method"),
+      civ_address: f.get("civ_address") ? parseInt(f.get("civ_address")) : null,
+      serial_port: f.get("cw_serial_port") || null,
+    } : null,
   };
 }
 

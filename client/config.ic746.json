@@ -16,5 +16,11 @@
     "server_host": "127.0.0.1",
     "server_port": 5006,
     "local_port": 5007
+  },
+  "cw": {
+    "server_host": "127.0.0.1",
+    "server_port": 5106,
+    "local_port": 5107,
+    "wpm": 20
   }
 }

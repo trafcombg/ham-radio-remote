@@ -26,10 +26,12 @@
         "endpoint_id": null,
         "udp_port": 5004
       },
+      "cw_udp_port": 5104,
       "ptt": {
         "method": "civ",
         "civ_address": 148
-      }
+      },
+      "cw": null
     },
     {
       "name": "IC-746PRO",
@@ -50,10 +52,12 @@
         "endpoint_id": null,
         "udp_port": 5006
       },
+      "cw_udp_port": 5106,
       "ptt": {
         "method": "rts",
         "serial_port": null
-      }
+      },
+      "cw": null
     }
   ]
 }

@@ -84,7 +84,9 @@ class RadioConfigRequest(BaseModel):
     cat: RadioCatConfig
     control_port: int
     audio: RadioAudioConfig
+    cw_udp_port: int
     ptt: RadioPttConfig
+    cw: RadioPttConfig | None = None  # null = CW keys the same line as ptt
     force: bool = False
 
 
@@ -99,7 +101,9 @@ def _to_cfg_dict(body: RadioConfigRequest) -> dict:
         "cat": body.cat.model_dump(),
         "control_port": body.control_port,
         "audio": body.audio.model_dump(),
+        "cw_udp_port": body.cw_udp_port,
         "ptt": body.ptt.model_dump(),
+        "cw": body.cw.model_dump() if body.cw else None,
     }
 
 
