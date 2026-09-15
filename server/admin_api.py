@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from common import debug_logging
 from common.version import APP_VERSION
 from server.cat_bridge import probe_serial_port
 from server.db import PostgresDb
@@ -260,27 +261,21 @@ async def list_devices(admin=Depends(require_admin)):
 
 
 class DebugRequest(BaseModel):
-    enabled: bool
+    root_level: str = "INFO"
+    modules: dict[str, str] = {}
 
 
 @app.get("/api/debug")
 async def get_debug(admin=Depends(require_admin)):
-    return {"enabled": logging.getLogger().level <= logging.DEBUG}
+    state = debug_logging.current_state()
+    return {"root_level": state["root_level"], "modules": state["loggers"], "available_loggers": debug_logging.list_loggers()}
 
 
 @app.post("/api/debug")
 async def set_debug(body: DebugRequest, admin=Depends(require_admin)):
-    logging.getLogger().setLevel(logging.DEBUG if body.enabled else logging.INFO)
-    # comtypes (pycaw's COM refcounting, from audio device enumeration)
-    # is extremely chatty at DEBUG and drowns out everything actually
-    # useful — keep it quiet regardless of our own debug toggle.
-    logging.getLogger("comtypes").setLevel(logging.WARNING)
-    # The admin panel's frequent polling (levels, update check, etc.)
-    # would otherwise flood the console with "GET ... 200 OK" — only show
-    # it while debug mode is on.
-    logging.getLogger("uvicorn.access").setLevel(logging.INFO if body.enabled else logging.WARNING)
-    log.info("debug logging %s", "enabled" if body.enabled else "disabled")
-    return {"enabled": body.enabled}
+    debug_logging.apply(body.root_level, body.modules)
+    log.info("debug logging: root=%s modules=%s", body.root_level, body.modules)
+    return {"ok": True}
 
 
 @app.get("/api/radios/levels")

@@ -34,8 +34,27 @@
 </div>
 <button id="addBtn">+ Добави радио</button>
 <button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
-<button id="debugBtn" class="secondary">Debug режим: ...</button>
+<button id="debugBtn" class="secondary">Debug настройки</button>
 <button id="logoutBtn" class="secondary">Изход</button>
+
+<dialog id="debugDialog">
+  <h2>Debug настройки</h2>
+  <label>Общо ниво
+    <select id="debugRootLevel">
+      <option value="ERROR">ERROR</option>
+      <option value="WARNING">WARNING</option>
+      <option value="INFO" selected>INFO</option>
+      <option value="DEBUG">DEBUG</option>
+    </select>
+  </label>
+  <label>Модули в DEBUG (независимо от общото ниво)</label>
+  <div id="debugModulesList" style="max-height:240px; overflow-y:auto; margin-top:.3rem;"></div>
+  <div style="margin-top:1rem; display:flex; gap:.5rem;">
+    <button type="button" id="debugApplyBtn">Приложи</button>
+    <button type="button" id="debugCloseBtn" class="secondary">Затвори</button>
+  </div>
+</dialog>
+
 <table id="radioTable">
   <thead><tr><th>Активно</th><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th>Аудио Вх/Изх</th><th></th></tr></thead>
   <tbody></tbody>
@@ -665,17 +684,39 @@ async function deleteUser(username) {
   loadUsers();
 }
 
-async function refreshDebugBtn() {
+const debugDialog = document.getElementById("debugDialog");
+
+async function openDebugDialog() {
   const res = await api("/api/debug");
   const body = await res.json();
-  document.getElementById("debugBtn").textContent = `Debug режим: ${body.enabled ? "вкл." : "изкл."}`;
+  document.getElementById("debugRootLevel").value = body.root_level;
+  const list = document.getElementById("debugModulesList");
+  list.innerHTML = "";
+  for (const name of body.available_loggers) {
+    const label = document.createElement("label");
+    label.style.cssText = "display:block; width:auto; font-size:.85rem;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = name;
+    cb.style.width = "auto";
+    cb.checked = body.modules[name] === "DEBUG";
+    label.append(cb, " " + name);
+    list.appendChild(label);
+  }
+  debugDialog.showModal();
 }
 
-document.getElementById("debugBtn").onclick = async () => {
-  const btn = document.getElementById("debugBtn");
-  const currentlyOn = btn.textContent.includes("вкл.");
-  await api("/api/debug", { method: "POST", body: JSON.stringify({ enabled: !currentlyOn }) });
-  refreshDebugBtn();
+document.getElementById("debugBtn").onclick = openDebugDialog;
+document.getElementById("debugCloseBtn").onclick = () => debugDialog.close();
+
+document.getElementById("debugApplyBtn").onclick = async () => {
+  const rootLevel = document.getElementById("debugRootLevel").value;
+  const modules = {};
+  for (const cb of document.querySelectorAll("#debugModulesList input:checked")) {
+    modules[cb.value] = "DEBUG";
+  }
+  await api("/api/debug", { method: "POST", body: JSON.stringify({ root_level: rootLevel, modules }) });
+  debugDialog.close();
 };
 
 async function checkForUpdate() {
@@ -720,7 +761,6 @@ document.getElementById("updateApplyBtn").onclick = async () => {
   loadAmplifiers();
   loadUsers();
   checkForUpdate();
-  refreshDebugBtn();
   setInterval(checkForUpdate, 5 * 60 * 1000);
   setInterval(pollLevels, 300);
 })();

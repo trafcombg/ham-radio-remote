@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from client import credential_store
+from client.debug_dialog import DebugDialog
 from client.settings_dialog import SettingsDialog
 from common.updater import download_and_run_installer
 from common.version import APP_VERSION
@@ -71,9 +72,8 @@ class MainWindow(QWidget):
 
         self.settings_button = QPushButton("Настройки")
 
-        self.debug_button = QPushButton("Debug режим: изкл.")
-        self.debug_button.setCheckable(True)
-        self.debug_button.clicked.connect(self._toggle_debug)
+        self.debug_button = QPushButton("Debug настройки")
+        self.debug_button.clicked.connect(self._open_debug_dialog)
 
         self.update_button = QPushButton("Обнови")
         self.update_button.setStyleSheet("background: #f59e0b;")
@@ -223,13 +223,11 @@ class MainWindow(QWidget):
         if not ok:
             log.warning("смяна на режим за %s се провали: %s", name, detail)
 
-    def _toggle_debug(self, checked: bool):
-        logging.getLogger().setLevel(logging.DEBUG if checked else logging.INFO)
-        # comtypes (pycaw's COM refcounting) is extremely chatty at DEBUG
-        # and drowns out everything actually useful — keep it quiet.
-        logging.getLogger("comtypes").setLevel(logging.WARNING)
-        self.debug_button.setText(f"Debug режим: {'вкл.' if checked else 'изкл.'}")
-        log.info("debug logging %s", "enabled" if checked else "disabled")
+    def _open_debug_dialog(self):
+        dialog = DebugDialog(self)
+        if dialog.exec():
+            dialog.apply()
+            log.info("debug logging updated")
 
     def _apply_update(self):
         update = self.update_state.available
