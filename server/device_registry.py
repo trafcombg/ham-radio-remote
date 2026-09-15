@@ -48,22 +48,36 @@ def scan_serial_devices() -> list[SerialDeviceInfo]:
 def scan_audio_devices() -> list[AudioDeviceInfo]:
     import sounddevice as sd
 
-    endpoint_ids = _wasapi_endpoint_ids()
-    return [
-        AudioDeviceInfo(i, d["name"], endpoint_ids.get(d["name"]))
-        for i, d in enumerate(sd.query_devices())
-    ]
+    devices = list(sd.query_devices())
+    ids = _pair_endpoint_ids([d["name"] for d in devices], _wasapi_endpoint_ids())
+    return [AudioDeviceInfo(i, d["name"], eid) for i, (d, eid) in enumerate(zip(devices, ids))]
+
+
+def _pair_endpoint_ids(names: list[str], ids_by_name: dict) -> list:
+    """Match each PortAudio device name to a pycaw endpoint id, consuming
+    ids in order per name so devices sharing a friendly name (e.g. a stereo
+    USB codec enumerated as two identical "Microphone" entries) get distinct
+    ids instead of all collapsing onto the same one."""
+    used: dict[str, int] = {}
+    result = []
+    for name in names:
+        pos = used.get(name, 0)
+        ids = ids_by_name.get(name, [])
+        result.append(ids[pos] if pos < len(ids) else None)
+        used[name] = pos + 1
+    return result
 
 
 def _wasapi_endpoint_ids() -> dict:
-    """name -> WASAPI endpoint id, for every device pycaw can see. Queried
-    once per scan, not once per device: pycaw's own GetAllDevices() prints
-    a UserWarning per endpoint it can't fully query (common for disabled
-    or disconnected devices Windows still lists) — calling it once instead
-    of per-device avoids both repeating that noise N times per scan and
-    N redundant COM enumerations. The warning itself is harmless (this
-    function degrades to skipping that device's endpoint id) so it's
-    suppressed rather than left to spam the console."""
+    """name -> list of WASAPI endpoint ids (one per device with that name),
+    for every device pycaw can see. Queried once per scan, not once per
+    device: pycaw's own GetAllDevices() prints a UserWarning per endpoint
+    it can't fully query (common for disabled or disconnected devices
+    Windows still lists) — calling it once instead of per-device avoids
+    both repeating that noise N times per scan and N redundant COM
+    enumerations. The warning itself is harmless (this function degrades
+    to skipping that device's endpoint id) so it's suppressed rather than
+    left to spam the console."""
     try:
         import warnings
 
@@ -72,7 +86,10 @@ def _wasapi_endpoint_ids() -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             devices = AudioUtilities.GetAllDevices()
-        return {dev.FriendlyName: dev.id for dev in devices}
+        ids_by_name: dict[str, list[str]] = {}
+        for dev in devices:
+            ids_by_name.setdefault(dev.FriendlyName, []).append(dev.id)
+        return ids_by_name
     except Exception:
         log.debug("WASAPI endpoint id lookup unavailable", exc_info=True)
         return {}
@@ -150,4 +167,15 @@ if __name__ == "__main__":
         assert False, "expected DeviceNotFoundError"
     except DeviceNotFoundError:
         pass
+
+    # duplicate-named audio devices (e.g. two "Microphone" endpoints) must
+    # get distinct ids, not both collapse onto the same one
+    names = ["Microphone (2- USB Audio CODEC )", "Microphone (2- USB Audio CODEC )", "Speakers (Realtek)"]
+    ids_by_name = {
+        "Microphone (2- USB Audio CODEC )": ["{guid-mic-1}", "{guid-mic-2}"],
+        "Speakers (Realtek)": ["{guid-spk}"],
+    }
+    assert _pair_endpoint_ids(names, ids_by_name) == ["{guid-mic-1}", "{guid-mic-2}", "{guid-spk}"]
+    assert _pair_endpoint_ids(["Unknown Device"], {}) == [None]
+
     print("device_registry.py: ok")
