@@ -16,6 +16,7 @@ from client.session import RadioSession
 from client.ui import MainWindow
 from common.app_paths import app_dir
 from common.firewall import ensure_ports_open
+from common.priority import raise_process_priority
 from common.updater import check_for_update
 from common.version import APP_VERSION
 
@@ -88,6 +89,7 @@ def _login(cfg: dict, path: Path) -> str | None:
 
 
 def main():
+    raise_process_priority()
     path = config_path()
     cfg = load_config(path)
 

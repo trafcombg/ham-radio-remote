@@ -251,6 +251,7 @@ class RadioSession:
                 peer=(self.server_host, radio_cfg["audio_port"]),
                 mic_gain=audio_cfg.get("mic_gain", 1.0),
                 speaker_gain=audio_cfg.get("speaker_gain", 1.0),
+                latency=audio_cfg.get("latency", "low"),
             )
             self.audio.start()
         except Exception as e:

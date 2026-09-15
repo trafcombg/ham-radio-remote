@@ -26,7 +26,7 @@ def _device_combo(devices: list, current) -> QComboBox:
 class SettingsDialog(QDialog):
     def __init__(
         self, server_host: str, password: str, cw_cfg: dict, rc28_cfg: dict,
-        com_ports: dict, active_radios: list, radio_audio: dict, parent=None,
+        com_ports: dict, active_radios: list, radio_audio: dict, audio_latency: str = "low", parent=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Настройки — сървър, CW и RC-28")
@@ -37,6 +37,11 @@ class SettingsDialog(QDialog):
         self.password = QLineEdit(password)
         self.password.setEchoMode(QLineEdit.Password)
         self.password.setPlaceholderText("парола за този сървър (зададена от администратора)")
+
+        self.audio_latency = QComboBox()
+        self.audio_latency.addItem("Ниска (по-малко закъснение, риск от прекъсвания)", "low")
+        self.audio_latency.addItem("По-стабилна (по-голям буфер)", "high")
+        self.audio_latency.setCurrentIndex(max(0, self.audio_latency.findData(audio_latency)))
 
         self.source = QComboBox()
         self.source.addItem("Прав ключ", "straight")
@@ -65,6 +70,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout(self)
         form.addRow("Сървър", self.server_host)
         form.addRow("Парола", self.password)
+        form.addRow("Latency на аудио устройствата", self.audio_latency)
         form.addRow("CW източник", self.source)
         form.addRow("Скорост (WPM)", self.wpm)
         form.addRow("Paddle порт", self.paddle_port)
@@ -104,6 +110,9 @@ class SettingsDialog(QDialog):
 
     def result_password(self) -> str:
         return self.password.text()
+
+    def result_audio_latency(self) -> str:
+        return self.audio_latency.currentData()
 
     def result_cw_cfg(self, base_cw_cfg: dict) -> dict:
         cfg = dict(base_cw_cfg)

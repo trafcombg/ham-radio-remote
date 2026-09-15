@@ -187,7 +187,8 @@ class MainWindow(QWidget):
         current_password = credential_store.decrypt(self.app_cfg.get("password_encrypted", ""))
         dialog = SettingsDialog(
             self.app_cfg["server_host"], current_password, self.app_cfg["cw"], self.app_cfg["rc28"],
-            self.app_cfg.get("com_ports", {}), active_radios, self.app_cfg.get("radio_audio", {}), self,
+            self.app_cfg.get("com_ports", {}), active_radios, self.app_cfg.get("radio_audio", {}),
+            self.app_cfg["audio"].get("latency", "low"), self,
         )
         if dialog.exec():
             new_server_host = dialog.result_server_host()
@@ -198,6 +199,7 @@ class MainWindow(QWidget):
             self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
             self.app_cfg["rc28"] = dialog.result_rc28_cfg(self.app_cfg["rc28"])
             self.app_cfg["radio_audio"] = dialog.result_radio_audio()
+            self.app_cfg["audio"]["latency"] = dialog.result_audio_latency()
             self.config_path.write_text(json.dumps(self.app_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
             if (new_server_host and new_server_host != self.session.server_host) or password_changed:
                 asyncio.run_coroutine_threadsafe(self.session.reconnect(new_server_host or self.session.server_host), self.loop)

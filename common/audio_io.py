@@ -44,7 +44,7 @@ def _update_jitter(prev_jitter_ms: float, gap_s: float) -> float:
 
 
 class AudioLink:
-    def __init__(self, input_device, output_device, listen_port, peer=None, mic_gain=1.0, speaker_gain=1.0):
+    def __init__(self, input_device, output_device, listen_port, peer=None, mic_gain=1.0, speaker_gain=1.0, latency="low"):
         self.peer = peer
         self.input_level = 0.0   # last mic frame's mean abs amplitude, for a UI meter
         self.output_level = 0.0  # last speaker frame's mean abs amplitude, for a UI meter
@@ -56,6 +56,15 @@ class AudioLink:
         self._last_recv_time = None
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # DSCP Expedited Forwarding (0xB8) — standard "this is
+            # real-time voice traffic" marker. Best-effort: recent Windows
+            # versions ignore a plain setsockopt() for unprivileged apps
+            # (real QoS marking there needs the qWave API instead), but
+            # this costs nothing and helps on LANs/OSes that honor it.
+            self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 0xB8)
+        except OSError:
+            pass
         self.sock.setblocking(False)
         self.sock.bind(("0.0.0.0", listen_port))
         self._listen_port = listen_port
@@ -75,14 +84,14 @@ class AudioLink:
             try:
                 self._in_stream = sd.InputStream(
                     device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic,
+                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic, latency=latency,
                 )
             except Exception:
                 log.warning("no microphone/input device available (device=%r) — mic capture disabled", input_device, exc_info=True)
             try:
                 self._out_stream = sd.OutputStream(
                     device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker,
+                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker, latency=latency,
                 )
             except Exception:
                 log.warning("no speaker/output device available (device=%r) — playback disabled", output_device, exc_info=True)

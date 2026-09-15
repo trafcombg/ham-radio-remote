@@ -15,6 +15,7 @@ from uvicorn.config import LOGGING_CONFIG
 
 from common.app_paths import app_dir
 from common.firewall import ensure_ports_open
+from common.priority import raise_process_priority
 from common.updater import check_for_update
 from common.version import APP_VERSION
 from server.admin_api import app as admin_app
@@ -91,6 +92,7 @@ def _apply_pending_update() -> bool:
 
 
 async def main():
+    raise_process_priority()
     cfg = load_config()
     db = await build_db(cfg.get("db"))
 
