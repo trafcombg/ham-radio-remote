@@ -1,73 +1,94 @@
-# HAM Radio Remote — Фаза 1 прототип
+# HAM Radio Remote — Фаза 1 + Фаза 2
 
-Клиент-сървър дистанционно управление на IC-7300: CAT bridge (виртуален
-COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
-(RTP-стил UDP + Opus). Един потребител, едно радио. Виж
+Клиент-сървър дистанционно управление на Icom радиостанции: CAT bridge
+(виртуален COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
+(UDP + Opus) + PTT арбитраж между потребители. Виж
 [ham-radio-remote-plan.md](ham-radio-remote-plan.md) за пълния план по фази.
 
-## Структура
+## Какво добавя Фаза 2 към Фаза 1
+
+- Второ радио (IC-746PRO през microHAM, PTT през RTS/DTR линия вместо CAT)
+- PTT методът е абстрахиран (`server/radio_bridge.py`: `CivPtt` / `LinePtt`), конфигурируем per радио
+- Стабилна device идентификация по VID/PID/сериен номер/USB път (`server/device_registry.py`) вместо по COM име/индекс
+- Отделен control канал (login + PTT заявка/отговор + статус) — PTT вече не минава като сурови CAT байтове от клиента, защото арбитражът трябва да го прихване преди да стигне до радиото, а RTS/DTR изобщо не са CAT данни
+- PTT lock per радио (`server/ptt_arbiter.py`) — втори потребител на заето радио бива отказан, не опашкуван
+- Session/transmission логване в PostgreSQL (`server/db.py`) — по избор, работи и без база (`NullDb`)
+
+## Структура (нови/променени спрямо Фаза 1)
 
 ```
-common/audio_io.py   споделен mic/speaker <-> UDP/Opus link (server + client)
-common/civ.py         CI-V PTT байтове
-server/cat_bridge.py  сериен <-> TCP relay
-server/main.py         сървър entry point
-server/db/schema.sql   PostgreSQL структура (за Фаза 2, не се ползва още)
-client/com_relay.py   com0com виртуален порт <-> TCP relay
-client/ui.py            минимален PySide6 UI
-client/main.py         клиент entry point
+server/device_registry.py  VID/PID/serial/location -> COM порт / аудио индекс, + device watcher
+server/list_devices.py     помощна CLI: показва наличните устройства и техните стабилни ID
+server/ptt_arbiter.py      lock: кой потребител предава в момента, per радио
+server/db.py                 PostgreSQL логване (NullDb fallback без конфигурирана база)
+server/radio_bridge.py     оркестрира едно радио: CAT relay + control канал + аудио + PTT
+server/main.py               зарежда списък радиа, резолва устройства, стартира bridge-овете
+client/control.py           login + PTT заявка/отговор + статус "заето от X"
 ```
 
 ## Инсталация
 
-На сървърната машина (там, където е включено IC-7300):
-
 ```bash
 pip install -r server/requirements.txt
-```
-
-На клиентската машина:
-
-```bash
 pip install -r client/requirements.txt
 ```
 
-Клиентът очаква вече създадена com0com виртуална двойка портове (напр.
-COM10↔COM11) — инсталирай com0com отделно (packaging/auto-install е
-Фаза 7). CAT софтуерът (WSJT-X и др.) се сочи към единия край
-(COM10), нашият клиент отваря другия (COM11).
+com0com виртуална двойка портове (по една на радио) все още се
+инсталира ръчно — packaging е Фаза 7.
 
 ## Конфигурация
 
-Редактирай `server/config.json` (сериен порт на IC-7300, аудио
-устройства) и `client/config.json` (com0com порт, IP на сървъра).
-`audio.input_device`/`output_device`: `null` за системното устройство
-по подразбиране, или име/индекс от `python -m sounddevice`.
+1. Пусни `python -m server.list_devices`, за да видиш реалните VID/PID/
+   сериен номер на CAT адаптерите и `endpoint_id` на аудио устройствата.
+2. Попълни `server/config.json` — списък `"radios"`, по един запис на
+   радио. За идентификация по VID/PID: попълни `cat.vid`/`cat.pid` (и
+   `serial_number`/`location` ако две устройства споделят VID/PID — при
+   двусмислие сървърът отказва да стартира точно това радио и логва
+   грешка, вместо да гадае). Или просто задай `cat.serial_port` директно,
+   ако не искаш VID/PID резолюция.
+3. `ptt.method`: `"civ"` (IC-7300 — PTT през CI-V команда) или `"rts"`/
+   `"dtr"` (IC-746PRO+microHAM — PTT през серийна линия). `ptt.serial_port:
+   null` означава "използвай същия сериен порт като CAT" (типично за
+   microHAM интерфейси).
+4. По избор: `db.dsn` — PostgreSQL connection string за логване на
+   сесии/предавания. Приложи схемата веднъж: `psql <dsn> -f server/db/schema.sql`.
+   Без `dsn` логването просто е изключено (`NullDb`), останалото работи.
+5. `client/config.json` (радио 1) и `client/config.ic746.json` (радио 2,
+   различен потребител) — попълни `com.local_port` с твоя com0com порт.
 
 ## Стартиране
 
 ```bash
-# на сървъра
+# сървър
 python -m server.main
 
-# на клиента
+# клиент 1 (IC-7300, потребител "ivan")
 python -m client.main
+
+# клиент 2 (IC-746PRO, потребител "georgi") — на друга машина или втори прозорец
+python -m client.main config.ic746.json
 ```
 
 ## Тест
 
-1. Стартирай сървъра, после клиента — статусът в клиента трябва да
-   стане "Свързан".
-2. Отвори WSJT-X (или друг CAT софтуер) на COM10 — трябва да чете
-   честотата от радиото през bridge-а.
-3. Задръж PTT бутона в клиента — радиото трябва да превключи на
-   предаване (провери индикатора на IC-7300).
-4. Говори в микрофона на клиентската машина — звукът трябва да се чуе
-   от аудио изхода на сървърната машина (и обратно, звук от радиото →
-   високоговорител на клиента).
+**Multi-radio / multi-user:** стартирай сървъра, после двата клиента —
+и двата трябва да покажат "Свързан", всеки контролира различно радио,
+независимо аудио и CAT.
 
-## Самопроверки
+**PTT lock:** задръж PTT на клиент 1 — статусът му минава на "Предава".
+Ако друг потребител се свърже КЪМ СЪЩОТО радио (втори control клиент на
+същия control порт) и опита PTT, получава `ptt_denied` с ясна причина
+("заето от ivan") вместо да ключва радиото — виж
+`server/ptt_arbiter.py`'s self-check по-долу за логиката без хардуер.
+
+**RTS/DTR PTT:** на IC-746PRO+microHAM, задръж PTT в клиента — микрофонният
+вход на microHAM интерфейса трябва да се включи (провери индикатора на
+интерфейса/радиото), без да е изпратена нито една CI-V команда.
+
+## Самопроверки (без хардуер)
 
 ```bash
-python -m common.civ
+python server/ptt_arbiter.py
+python server/device_registry.py
+python common/civ.py
 ```

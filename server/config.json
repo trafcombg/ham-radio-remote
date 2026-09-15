@@ -1,13 +1,55 @@
 {
-  "cat": {
-    "serial_port": "COM5",
-    "baud": 19200,
-    "tcp_host": "0.0.0.0",
-    "tcp_port": 4532
+  "db": {
+    "dsn": null
   },
-  "audio": {
-    "input_device": null,
-    "output_device": null,
-    "udp_port": 5004
-  }
+  "radios": [
+    {
+      "name": "IC-7300",
+      "model": "IC-7300",
+      "cat": {
+        "serial_port": "COM5",
+        "vid": null,
+        "pid": null,
+        "serial_number": null,
+        "location": null,
+        "baud": 19200,
+        "tcp_host": "0.0.0.0",
+        "tcp_port": 4532
+      },
+      "control_port": 4632,
+      "audio": {
+        "name_contains": null,
+        "endpoint_id": null,
+        "udp_port": 5004
+      },
+      "ptt": {
+        "method": "civ",
+        "civ_address": 148
+      }
+    },
+    {
+      "name": "IC-746PRO",
+      "model": "IC-746PRO",
+      "cat": {
+        "serial_port": "COM6",
+        "vid": null,
+        "pid": null,
+        "serial_number": null,
+        "location": null,
+        "baud": 9600,
+        "tcp_host": "0.0.0.0",
+        "tcp_port": 4533
+      },
+      "control_port": 4633,
+      "audio": {
+        "name_contains": null,
+        "endpoint_id": null,
+        "udp_port": 5006
+      },
+      "ptt": {
+        "method": "rts",
+        "serial_port": null
+      }
+    }
+  ]
 }

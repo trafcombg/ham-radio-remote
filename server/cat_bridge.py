@@ -1,4 +1,5 @@
-"""CAT (CI-V) serial <-> TCP relay. Single client — arbitration is Phase 2."""
+"""CAT (CI-V) serial <-> TCP relay. One of these per radio; PTT arbitration
+lives one level up in radio_bridge.py, not here."""
 
 import asyncio
 import logging
@@ -24,12 +25,13 @@ class SerialRelay(asyncio.Protocol):
         log.warning("serial connection lost: %s", exc)
 
 
-async def run_cat_bridge(serial_port: str, baud: int, tcp_host: str, tcp_port: int):
+async def open_serial(serial_port: str, baud: int) -> SerialRelay:
     loop = asyncio.get_running_loop()
-    _, serial_proto = await serial_asyncio.create_serial_connection(
-        loop, SerialRelay, serial_port, baudrate=baud
-    )
+    _, proto = await serial_asyncio.create_serial_connection(loop, SerialRelay, serial_port, baudrate=baud)
+    return proto
 
+
+async def serve_cat(serial_proto: SerialRelay, tcp_host: str, tcp_port: int):
     async def handle_client(reader, writer):
         peer = writer.get_extra_info("peername")
         log.info("CAT client connected: %s", peer)
@@ -49,6 +51,6 @@ async def run_cat_bridge(serial_port: str, baud: int, tcp_host: str, tcp_port: i
             writer.close()
 
     server = await asyncio.start_server(handle_client, tcp_host, tcp_port)
-    log.info("CAT bridge listening on %s:%s -> %s", tcp_host, tcp_port, serial_port)
+    log.info("CAT bridge listening on %s:%s", tcp_host, tcp_port)
     async with server:
         await server.serve_forever()

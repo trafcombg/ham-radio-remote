@@ -1,8 +1,8 @@
 """Bridges a local virtual COM port (com0com) to the server's CAT TCP bridge.
 
 The other end of the com0com pair is what real CAT software (WSJT-X,
-N1MM+, fldigi) opens. send_civ() lets the client GUI inject raw CI-V bytes
-(e.g. the PTT button) into the same tunnel without a second connection.
+N1MM+, fldigi) opens. PTT does NOT go through here — see control.py —
+because arbitration has to see it before it reaches the radio.
 """
 
 import asyncio
@@ -49,8 +49,3 @@ class ComRelay:
                 log.warning("CAT bridge connection closed")
                 break
             self.serial.write(data)
-
-    async def send_civ(self, command: bytes):
-        if self.writer:
-            self.writer.write(command)
-            await self.writer.drain()

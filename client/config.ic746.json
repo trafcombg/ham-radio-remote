@@ -1,20 +1,20 @@
 {
-  "username": "ivan",
+  "username": "georgi",
   "com": {
-    "local_port": "COM11",
-    "baud": 19200,
+    "local_port": "COM21",
+    "baud": 9600,
     "server_host": "127.0.0.1",
-    "server_port": 4532
+    "server_port": 4533
   },
   "control": {
     "server_host": "127.0.0.1",
-    "server_port": 4632
+    "server_port": 4633
   },
   "audio": {
     "input_device": null,
     "output_device": null,
     "server_host": "127.0.0.1",
-    "server_port": 5004,
-    "local_port": 5005
+    "server_port": 5006,
+    "local_port": 5007
   }
 }

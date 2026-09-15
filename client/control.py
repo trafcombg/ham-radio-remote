@@ -1,0 +1,43 @@
+"""Control connection: login + PTT request/response + busy status. Kept
+separate from the raw CAT byte tunnel so the server can arbitrate PTT
+before it reaches the radio, regardless of PTT method (CI-V or RTS/DTR)."""
+
+import asyncio
+import json
+import logging
+
+log = logging.getLogger("control")
+
+
+class ControlClient:
+    def __init__(self, username: str, server_host: str, server_port: int):
+        self.username = username
+        self.server_host = server_host
+        self.server_port = server_port
+        self.writer = None
+        self.busy_by = None  # username currently holding PTT on this radio, or None
+
+    async def run(self):
+        reader, writer = await asyncio.open_connection(self.server_host, self.server_port)
+        self.writer = writer
+        await self._send({"type": "hello", "username": self.username})
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                msg = json.loads(line)
+                if msg["type"] == "status":
+                    self.busy_by = msg["busy_by"]
+                elif msg["type"] == "ptt_denied":
+                    log.warning("PTT denied: %s", msg["reason"])
+        finally:
+            self.writer = None
+
+    async def request_ptt(self, on: bool):
+        await self._send({"type": "ptt", "on": on})
+
+    async def _send(self, obj):
+        if self.writer:
+            self.writer.write((json.dumps(obj) + "\n").encode())
+            await self.writer.drain()

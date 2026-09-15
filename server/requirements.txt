@@ -2,3 +2,5 @@ pyserial-asyncio
 sounddevice
 numpy
 PyOgg
+asyncpg
+pycaw

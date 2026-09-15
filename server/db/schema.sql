@@ -1,5 +1,6 @@
--- Structure only for Phase 1 — not yet wired into the app.
--- Populated/used starting Phase 2 (multi-user sessions, PTT logging).
+-- Applied by server/db.py (PostgresDb) starting Phase 2, when db.dsn is set
+-- in server/config.json. Run this once against that database before
+-- starting the server: psql <dsn> -f server/db/schema.sql
 
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -9,7 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS radios (
     id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
+    name TEXT UNIQUE NOT NULL,
     model TEXT NOT NULL
 );
 

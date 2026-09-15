@@ -3,18 +3,17 @@ import asyncio
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
-from common.civ import ptt_command
-
 
 class MainWindow(QWidget):
-    def __init__(self, relay, loop, audio, civ_address):
+    def __init__(self, relay, control, loop, audio, username):
         super().__init__()
         self.relay = relay
+        self.control = control
         self.loop = loop
         self.audio = audio
-        self.civ_address = civ_address
+        self.username = username
 
-        self.setWindowTitle("HAM Radio Remote — Клиент")
+        self.setWindowTitle(f"HAM Radio Remote — {username}")
 
         self.status_label = QLabel("Свързване...")
         self.ptt_button = QPushButton("PTT (задръж)")
@@ -35,14 +34,17 @@ class MainWindow(QWidget):
         self.timer.start(200)
 
     def _send_ptt(self, on: bool):
-        cmd = ptt_command(self.civ_address, on)
-        asyncio.run_coroutine_threadsafe(self.relay.send_civ(cmd), self.loop)
-        self.status_label.setText("Предава" if on else "Свързан")
+        asyncio.run_coroutine_threadsafe(self.control.request_ptt(on), self.loop)
 
     def _tick(self):
         connected = self.relay.writer is not None
-        if connected and self.status_label.text() in ("Свързване...", "Няма връзка"):
-            self.status_label.setText("Свързан")
-        elif not connected:
+        busy_by = self.control.busy_by
+        if not connected:
             self.status_label.setText("Няма връзка")
+        elif busy_by and busy_by != self.username:
+            self.status_label.setText(f"Заето от {busy_by}")
+        elif busy_by == self.username:
+            self.status_label.setText("Предава")
+        else:
+            self.status_label.setText("Свързан")
         self.level_bar.setValue(min(100, int(self.audio.level / 200 * 100)))
