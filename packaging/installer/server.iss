@@ -4,12 +4,17 @@
 ;
 ; PostgreSQL is NOT bundled here — get the official installer from
 ; postgresql.org and drop it at packaging\installer\redist\postgresql-setup.exe
-; if you want the "Install PostgreSQL" task offered below; otherwise
-; leave that task unchecked and point server\config.json at an existing
-; PostgreSQL instance after installing.
+; if you want the "Install PostgreSQL" task offered below. The #if below
+; means: if you never place that file there, the task/step simply don't
+; exist in the compiled installer — no missing-file error at install
+; time. Either way, without it the server still installs and runs fine
+; (NullDb fallback); point server\config.json at an existing PostgreSQL
+; instance whenever you're ready for admin-panel logins and config storage.
+
+#define HasPostgresRedist FileExists("redist\postgresql-setup.exe")
 
 #define MyAppName "HAM Radio Remote Server"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Your Callsign / Club"
 #define MyAppExeName "HAM-Radio-Server.exe"
 
@@ -35,14 +40,18 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 Name: "bulgarian"; MessagesFile: "compiler:Languages\Bulgarian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+#if HasPostgresRedist
 [Tasks]
-Name: "installpostgres"; Description: "Инсталирай PostgreSQL локално (пропусни ако вече имаш PostgreSQL сървър)"; Flags: unchecked
+Name: "installpostgres"; Description: "Инсталирай PostgreSQL локално"; Flags: unchecked; Check: not IsPostgresInstalled
+#endif
 
 [Files]
 Source: "..\..\dist\HAM-Radio-Server\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\..\server\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "..\..\server\db\schema.sql"; DestDir: "{app}\db"; Flags: ignoreversion
-Source: "redist\postgresql-setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Tasks: installpostgres
+#if HasPostgresRedist
+Source: "redist\postgresql-setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Tasks: installpostgres
+#endif
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -50,11 +59,13 @@ Name: "{group}\Конфигурация (config.json)"; Filename: "{app}\config.
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
+#if HasPostgresRedist
 ; Unattended PostgreSQL install — verify these flags against whatever
 ; installer build you actually place in redist/ before shipping; the
 ; EnterpriseDB Windows installer supports --mode unattended plus
 ; --serverport/--superpassword etc., but exact flags vary by version.
 Filename: "{tmp}\postgresql-setup.exe"; Parameters: "--mode unattended --unattendedmodeui minimal"; StatusMsg: "Инсталиране на PostgreSQL..."; Tasks: installpostgres; Flags: waituntilterminated
+#endif
 ; Deliberately NOT registered as a startup app / service — the project
 ; plan requires the server to be started manually every time.
 
@@ -62,6 +73,45 @@ Filename: "{tmp}\postgresql-setup.exe"; Parameters: "--mode unattended --unatten
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+// Shared by the Task's Check (above) and CurUninstallStepChanged (below) —
+// finds any installed program whose display name contains "PostgreSQL"
+// by walking the Uninstall registry key, rather than hardcoding a
+// version-specific key (which varies by PostgreSQL release).
+function FindPostgresUninstallString(var UninstallString: String): Boolean;
+var
+  KeyPath: String;
+  Names: TArrayOfString;
+  I: Integer;
+  DisplayName: String;
+begin
+  Result := False;
+  KeyPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall';
+  if RegGetSubkeyNames(HKLM64, KeyPath, Names) then
+  begin
+    for I := 0 to GetArrayLength(Names) - 1 do
+    begin
+      if RegQueryStringValue(HKLM64, KeyPath + '\' + Names[I], 'DisplayName', DisplayName) then
+      begin
+        if Pos('PostgreSQL', DisplayName) > 0 then
+        begin
+          if RegQueryStringValue(HKLM64, KeyPath + '\' + Names[I], 'UninstallString', UninstallString) then
+          begin
+            Result := True;
+            Exit;
+          end;
+        end;
+      end;
+    end;
+  end;
+end;
+
+function IsPostgresInstalled: Boolean;
+var
+  Unused: String;
+begin
+  Result := FindPostgresUninstallString(Unused);
+end;
+
 var
   KeepPostgres: Boolean;
 
@@ -74,35 +124,16 @@ begin
   Result := True;
 end;
 
-// Finds any installed program whose display name contains "PostgreSQL"
-// and runs ITS OWN uninstaller unattended. Not tested against a real
-// PostgreSQL install here — verify before relying on it; the search
-// avoids hardcoding a version-specific registry key, but the unattended
-// uninstall flag still varies by installer build.
+// Not tested against a real PostgreSQL install here — verify before
+// relying on it; the unattended uninstall flag varies by installer build.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  KeyPath: String;
-  Names: TArrayOfString;
-  I: Integer;
-  DisplayName, UninstallString: String;
+  UninstallString: String;
   ResultCode: Integer;
 begin
   if (CurUninstallStep = usPostUninstall) and (not KeepPostgres) then
   begin
-    KeyPath := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall';
-    if RegGetSubkeyNames(HKLM64, KeyPath, Names) then
-    begin
-      for I := 0 to GetArrayLength(Names) - 1 do
-      begin
-        if RegQueryStringValue(HKLM64, KeyPath + '\' + Names[I], 'DisplayName', DisplayName) then
-        begin
-          if Pos('PostgreSQL', DisplayName) > 0 then
-          begin
-            if RegQueryStringValue(HKLM64, KeyPath + '\' + Names[I], 'UninstallString', UninstallString) then
-              Exec(RemoveQuotes(UninstallString), '--mode unattended', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
-          end;
-        end;
-      end;
-    end;
+    if FindPostgresUninstallString(UninstallString) then
+      Exec(RemoveQuotes(UninstallString), '--mode unattended', '', SW_SHOW, ewWaitUntilTerminated, ResultCode);
   end;
 end;

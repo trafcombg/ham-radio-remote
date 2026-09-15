@@ -2,4 +2,4 @@
 matching GitHub release (vX.Y.Z) before shipping an update — the
 auto-updater (common/updater.py) compares against this."""
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
