@@ -59,8 +59,14 @@
     <input type="hidden" name="audio_endpoint_id">
     <label>Аудио UDP порт<input name="audio_udp_port" type="number" required></label>
     <div class="row">
-      <div><label>Вход (микрофон/радио→сървър) сила<input name="audio_input_gain" type="number" step="0.1" value="1.0"></label></div>
-      <div><label>Изход (сървър→радио) сила<input name="audio_output_gain" type="number" step="0.1" value="1.0"></label></div>
+      <div><label>Вход (микрофон/радио→сървър) сила
+        <input name="audio_input_gain" type="range" min="0" max="2" step="0.01" value="1.0" oninput="audio_input_gain_out.value = audio_input_gain.value">
+        <output id="audio_input_gain_out">1.0</output>
+      </label></div>
+      <div><label>Изход (сървър→радио) сила
+        <input name="audio_output_gain" type="range" min="0" max="2" step="0.01" value="1.0" oninput="audio_output_gain_out.value = audio_output_gain.value">
+        <output id="audio_output_gain_out">1.0</output>
+      </label></div>
     </div>
     <label>PTT метод
       <select name="ptt_method">
@@ -215,11 +221,21 @@ catDeviceSelect.onchange = () => {
   form.location.value = d.location || "";
 };
 
+function syncGainOutputs() {
+  audio_input_gain_out.value = form.audio_input_gain.value;
+  audio_output_gain_out.value = form.audio_output_gain.value;
+}
+
 audioDeviceSelect.onchange = () => {
   if (audioDeviceSelect.value === "") return;
   const d = scannedDevices.audio[parseInt(audioDeviceSelect.value)];
   form.audio_name_contains.value = d.name;
   form.audio_endpoint_id.value = d.endpoint_id || "";
+  if (d.volume != null) {
+    form.audio_input_gain.value = d.volume;
+    form.audio_output_gain.value = d.volume;
+    syncGainOutputs();
+  }
 };
 
 async function openEdit(r) {
@@ -244,6 +260,7 @@ async function openEdit(r) {
     form.audio_udp_port.value = r.audio.udp_port;
     form.audio_input_gain.value = r.audio.input_gain != null ? r.audio.input_gain : 1.0;
     form.audio_output_gain.value = r.audio.output_gain != null ? r.audio.output_gain : 1.0;
+    syncGainOutputs();
     form.ptt_method.value = r.ptt.method;
     form.civ_address.value = r.ptt.civ_address || "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";

@@ -26,6 +26,7 @@ class AudioDeviceInfo:
     index: int  # PortAudio index — resolved fresh on every scan, not stable itself
     name: str
     endpoint_id: str | None  # WASAPI endpoint id, the stable Windows identifier
+    volume: float | None = None  # current Windows master volume, 0.0-1.0
 
 
 class DeviceNotFoundError(RuntimeError):
@@ -49,35 +50,41 @@ def scan_audio_devices() -> list[AudioDeviceInfo]:
     import sounddevice as sd
 
     devices = list(sd.query_devices())
-    ids = _pair_endpoint_ids([d["name"] for d in devices], _wasapi_endpoint_ids())
-    return [AudioDeviceInfo(i, d["name"], eid) for i, (d, eid) in enumerate(zip(devices, ids))]
+    info = _pair_wasapi_info([d["name"] for d in devices], _wasapi_devices())
+    return [
+        AudioDeviceInfo(i, d["name"], eid, volume)
+        for i, (d, (eid, volume)) in enumerate(zip(devices, info))
+    ]
 
 
-def _pair_endpoint_ids(names: list[str], ids_by_name: dict) -> list:
-    """Match each PortAudio device name to a pycaw endpoint id, consuming
-    ids in order per name so devices sharing a friendly name (e.g. a stereo
-    USB codec enumerated as two identical "Microphone" entries) get distinct
-    ids instead of all collapsing onto the same one."""
+def _pair_wasapi_info(names: list[str], info_by_name: dict) -> list:
+    """Match each PortAudio device name to a pycaw (endpoint_id, volume) pair,
+    consuming entries in order per name so devices sharing a friendly name
+    (e.g. a stereo USB codec enumerated as two identical "Microphone"
+    entries) get distinct ids/volumes instead of all collapsing onto the
+    same one."""
     used: dict[str, int] = {}
     result = []
     for name in names:
         pos = used.get(name, 0)
-        ids = ids_by_name.get(name, [])
-        result.append(ids[pos] if pos < len(ids) else None)
+        entries = info_by_name.get(name, [])
+        result.append(entries[pos] if pos < len(entries) else (None, None))
         used[name] = pos + 1
     return result
 
 
-def _wasapi_endpoint_ids() -> dict:
-    """name -> list of WASAPI endpoint ids (one per device with that name),
-    for every device pycaw can see. Queried once per scan, not once per
-    device: pycaw's own GetAllDevices() prints a UserWarning per endpoint
-    it can't fully query (common for disabled or disconnected devices
-    Windows still lists) — calling it once instead of per-device avoids
-    both repeating that noise N times per scan and N redundant COM
-    enumerations. The warning itself is harmless (this function degrades
-    to skipping that device's endpoint id) so it's suppressed rather than
-    left to spam the console."""
+def _wasapi_devices() -> dict:
+    """name -> list of (endpoint_id, master volume 0.0-1.0 or None) pairs,
+    one per device with that name, for every device pycaw can see. Queried
+    once per scan, not once per device: pycaw's own GetAllDevices() prints
+    a UserWarning per endpoint it can't fully query (common for disabled
+    or disconnected devices Windows still lists) — calling it once instead
+    of per-device avoids both repeating that noise N times per scan and
+    N redundant COM enumerations. The warning itself is harmless (this
+    function degrades to skipping that device's endpoint id) so it's
+    suppressed rather than left to spam the console. Volume lookup can
+    also fail per-device (disabled/disconnected endpoints raise COMError)
+    and just degrades to None for that device."""
     try:
         import warnings
 
@@ -86,12 +93,16 @@ def _wasapi_endpoint_ids() -> dict:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             devices = AudioUtilities.GetAllDevices()
-        ids_by_name: dict[str, list[str]] = {}
+        info_by_name: dict[str, list[tuple]] = {}
         for dev in devices:
-            ids_by_name.setdefault(dev.FriendlyName, []).append(dev.id)
-        return ids_by_name
+            try:
+                volume = dev.EndpointVolume.GetMasterVolumeLevelScalar()
+            except Exception:
+                volume = None
+            info_by_name.setdefault(dev.FriendlyName, []).append((dev.id, volume))
+        return info_by_name
     except Exception:
-        log.debug("WASAPI endpoint id lookup unavailable", exc_info=True)
+        log.debug("WASAPI device lookup unavailable", exc_info=True)
         return {}
 
 
@@ -169,13 +180,15 @@ if __name__ == "__main__":
         pass
 
     # duplicate-named audio devices (e.g. two "Microphone" endpoints) must
-    # get distinct ids, not both collapse onto the same one
+    # get distinct ids/volumes, not both collapse onto the same one
     names = ["Microphone (2- USB Audio CODEC )", "Microphone (2- USB Audio CODEC )", "Speakers (Realtek)"]
-    ids_by_name = {
-        "Microphone (2- USB Audio CODEC )": ["{guid-mic-1}", "{guid-mic-2}"],
-        "Speakers (Realtek)": ["{guid-spk}"],
+    info_by_name = {
+        "Microphone (2- USB Audio CODEC )": [("{guid-mic-1}", 0.8), ("{guid-mic-2}", 0.5)],
+        "Speakers (Realtek)": [("{guid-spk}", 1.0)],
     }
-    assert _pair_endpoint_ids(names, ids_by_name) == ["{guid-mic-1}", "{guid-mic-2}", "{guid-spk}"]
-    assert _pair_endpoint_ids(["Unknown Device"], {}) == [None]
+    assert _pair_wasapi_info(names, info_by_name) == [
+        ("{guid-mic-1}", 0.8), ("{guid-mic-2}", 0.5), ("{guid-spk}", 1.0),
+    ]
+    assert _pair_wasapi_info(["Unknown Device"], {}) == [(None, None)]
 
     print("device_registry.py: ok")

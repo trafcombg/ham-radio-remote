@@ -14,4 +14,4 @@ if __name__ == "__main__":
 
     print("Audio devices:")
     for d in scan_audio_devices():
-        print(f"  [{d.index}] {d.name}  endpoint_id={d.endpoint_id}")
+        print(f"  [{d.index}] {d.name}  endpoint_id={d.endpoint_id}  volume={d.volume}")
