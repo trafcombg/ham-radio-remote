@@ -16,7 +16,7 @@
 #define HasCom0comRedist FileExists("redist\com0com-setup.exe")
 
 #define MyAppName "HAM Radio Remote Client"
-#define MyAppVersion "1.2.3"
+#define MyAppVersion "1.2.4"
 #define MyAppPublisher "Your Callsign / Club"
 #define MyAppExeName "HAM-Radio-Client.exe"
 
