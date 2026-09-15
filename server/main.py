@@ -105,4 +105,8 @@ async def main():
 
 
 if __name__ == "__main__":
+    if os.name == "nt":
+        # ProactorEventLoop (Windows default) doesn't implement
+        # add_reader/remove_reader, which RadioBridge's CW UDP link needs.
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(main())
