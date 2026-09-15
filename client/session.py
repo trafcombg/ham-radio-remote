@@ -161,7 +161,7 @@ class RadioSession:
                 del self.cat_relays[name]
 
         try:
-            setupc = com0com.find_setupc()
+            setupc = await asyncio.to_thread(com0com.find_setupc)
         except com0com.Com0comNotFound as e:
             log.warning("%s", e)
             return
@@ -175,7 +175,7 @@ class RadioSession:
             mapping = com_ports.get(name)
             if not mapping:
                 try:
-                    exposed, internal = com0com.create_pair(setupc)
+                    exposed, internal = await asyncio.to_thread(com0com.create_pair, setupc)
                 except Exception:
                     log.exception("не успях да създам виртуален COM порт за %s", name)
                     continue

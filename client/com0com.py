@@ -86,7 +86,13 @@ def _parse_list_output(text: str) -> dict[int, dict[str, str]]:
 
 
 def list_pairs(setupc: Path) -> dict[int, dict[str, str]]:
-    result = subprocess.run([str(setupc), "list"], capture_output=True, text=True, timeout=10)
+    # cwd=setupc.parent: setupc.exe looks up com0com.inf next to itself
+    # using a path relative to the CALLER's cwd, not its own — run it from
+    # anywhere else and it can't find the driver .inf and pops up a native
+    # "SetupOpenInfFile ... ERROR 2" dialog instead of failing cleanly.
+    result = subprocess.run(
+        [str(setupc), "list"], capture_output=True, text=True, timeout=10, cwd=str(setupc.parent),
+    )
     return _parse_list_output(result.stdout)
 
 
@@ -113,7 +119,7 @@ def create_pair(setupc: Path) -> tuple[str, str]:
     exposed, internal = f"COM{n}", f"COM{n + 1}"
     result = subprocess.run(
         [str(setupc), "install", f"PortName={exposed}", f"PortName={internal}"],
-        capture_output=True, text=True, timeout=15,
+        capture_output=True, text=True, timeout=15, cwd=str(setupc.parent),
     )
     if result.returncode != 0:
         raise RuntimeError(f"com0com install се провали: {(result.stderr or result.stdout).strip()}")

@@ -14,6 +14,9 @@
   .busy { color: #f59e0b; }
   .free { color: #34d399; }
   tr.inactive { opacity: .45; }
+  .lvl-wrap { width: 70px; height: 8px; background: #333; border-radius: 3px; overflow: hidden; margin-bottom: 2px; }
+  .lvl-fill { height: 100%; width: 0%; background: #34d399; }
+  .lvl-fill.out { background: #3b82f6; }
   dialog { background: #262b33; color: #eee; border: none; border-radius: 8px; width: 440px; max-width: 90vw; padding: 1.5rem; }
   dialog label { display: block; margin-top: .6rem; font-size: .85rem; color: #aaa; }
   dialog input, dialog select { width: 100%; box-sizing: border-box; padding: .4rem; border-radius: 4px; border: 1px solid #444; background: #1b1f24; color: #eee; margin-top: .2rem; }
@@ -33,7 +36,7 @@
 <button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 <table id="radioTable">
-  <thead><tr><th>Активно</th><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th></th></tr></thead>
+  <thead><tr><th>Активно</th><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th>Аудио Вх/Изх</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -205,6 +208,10 @@ function renderTable() {
       <td>${catLabel}</td>
       <td>${r.ptt.method}</td>
       <td class="${busy ? "busy" : "free"}">${busy ? "заето от " + busy : "свободно"}</td>
+      <td>
+        <div class="lvl-wrap"><div class="lvl-fill" id="lvl-in-${CSS.escape(r.name)}"></div></div>
+        <div class="lvl-wrap"><div class="lvl-fill out" id="lvl-out-${CSS.escape(r.name)}"></div></div>
+      </td>
       <td></td>`;
     const actionsTd = tr.lastElementChild;
     const editBtn = document.createElement("button");
@@ -218,6 +225,19 @@ function renderTable() {
     actionsTd.append(editBtn, delBtn);
     tbody.appendChild(tr);
   }
+}
+
+async function pollLevels() {
+  try {
+    const res = await api("/api/radios/levels");
+    const levels = await res.json();
+    for (const [name, lv] of Object.entries(levels)) {
+      const inEl = document.getElementById(`lvl-in-${CSS.escape(name)}`);
+      const outEl = document.getElementById(`lvl-out-${CSS.escape(name)}`);
+      if (inEl) inEl.style.width = Math.min(100, lv.input / 200 * 100) + "%";
+      if (outEl) outEl.style.width = Math.min(100, lv.output / 200 * 100) + "%";
+    }
+  } catch (e) { /* transient — next poll retries */ }
 }
 
 const dialog = document.getElementById("editDialog");
@@ -687,6 +707,7 @@ document.getElementById("updateApplyBtn").onclick = async () => {
   loadUsers();
   checkForUpdate();
   setInterval(checkForUpdate, 5 * 60 * 1000);
+  setInterval(pollLevels, 300);
 })();
 </script>
 </body>

@@ -28,6 +28,7 @@ class SerialRelay(asyncio.Protocol):
 
     def connection_lost(self, exc):
         log.warning("serial connection lost: %s", exc)
+        self.transport = None
 
 
 async def open_serial(serial_port: str, baud: int) -> SerialRelay:
@@ -54,6 +55,9 @@ async def make_cat_server(serial_proto: SerialRelay, tcp_host: str, tcp_port: in
                 data = await reader.read(256)
                 if not data:
                     break
+                if serial_proto.transport is None:
+                    log.warning("CAT data from %s dropped — serial connection isn't up", peer)
+                    continue
                 serial_proto.transport.write(data)
         except ConnectionResetError:
             pass

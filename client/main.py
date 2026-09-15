@@ -10,6 +10,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from client import credential_store
+from client.login_dialog import LoginDialog
 from client.session import RadioSession
 from client.ui import MainWindow
 from common.app_paths import app_dir
@@ -59,12 +61,36 @@ async def _update_check_loop(state: UpdateState):
         await asyncio.sleep(UPDATE_CHECK_INTERVAL_S)
 
 
+def _login(cfg: dict, path: Path) -> str | None:
+    """Shows the startup login dialog, pre-filled from the saved
+    (encrypted) password if any; migrates a legacy plaintext "password"
+    field to encrypted storage on save. Returns the plaintext password to
+    use this session, or None if the user cancelled."""
+    encrypted = cfg.get("password_encrypted", "")
+    stored_password = credential_store.decrypt(encrypted) if encrypted else cfg.get("password", "")
+    dialog = LoginDialog(cfg.get("username", ""), stored_password)
+    if not dialog.exec():
+        return None
+    username, password = dialog.result_credentials()
+    cfg["username"] = username
+    cfg.pop("password", None)
+    cfg["password_encrypted"] = credential_store.encrypt(password)
+    path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+    return password
+
+
 def main():
     path = config_path()
     cfg = load_config(path)
 
+    app = QApplication(sys.argv)
+    password = _login(cfg, path)
+    if password is None:
+        sys.exit(0)
+
     loop = start_asyncio_thread()
     session = RadioSession(cfg, path)
+    session.password = password
     update_state = UpdateState()
     try:
         asyncio.run_coroutine_threadsafe(session.refresh_radios(), loop).result(timeout=10)
@@ -73,7 +99,6 @@ def main():
     asyncio.run_coroutine_threadsafe(session.start_amplifier_poll(), loop)
     asyncio.run_coroutine_threadsafe(_update_check_loop(update_state), loop)
 
-    app = QApplication(sys.argv)
     window = MainWindow(session, loop, cfg, path, update_state)
     window.show()
     exit_code = app.exec()

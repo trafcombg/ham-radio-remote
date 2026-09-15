@@ -40,25 +40,43 @@ CW_IDLE_RELEASE_S = 1.5  # release the shared lock this long after the last key-
 
 class CivKey:
     """CI-V transmit command — used for voice PTT and, on rigs with no
-    separate CW CAT command, for CW keying too (same physical action)."""
+    separate CW CAT command, for CW keying too (same physical action).
 
-    def __init__(self, transport, civ_address: int):
-        self._transport = transport
+    Reads serial_proto.transport lazily on every set(), not once at
+    construction: serial_asyncio schedules Protocol.connection_made via
+    loop.call_soon, so the transport can still be None for a moment right
+    after open_serial() returns — capturing it once raced that window.
+    A later physical disconnect (transport goes back to None — see
+    cat_bridge.SerialRelay.connection_lost) is handled the same way."""
+
+    def __init__(self, serial_proto, civ_address: int):
+        self._serial_proto = serial_proto
         self._addr = civ_address
 
     def set(self, on: bool):
-        self._transport.write(ptt_command(self._addr, on))
+        transport = self._serial_proto.transport
+        if transport is None:
+            log.warning("PTT/CW keyed via CI-V but the serial connection isn't up — dropped")
+            return
+        transport.write(ptt_command(self._addr, on))
 
 
 class LineKey:
-    """Keys the RTS or DTR line of a serial port (microHAM-style)."""
+    """Keys the RTS or DTR line of a serial port (microHAM-style). `conn`
+    may be a pyserial.Serial, or a zero-arg callable returning one (or
+    None) — used when the line lives on the shared CAT connection, whose
+    transport may not be up yet (see CivKey's docstring)."""
 
-    def __init__(self, pyserial_conn, line: str):
-        self._conn = pyserial_conn
+    def __init__(self, conn, line: str):
+        self._conn = conn
         self._line = line
 
     def set(self, on: bool):
-        setattr(self._conn, self._line, on)
+        conn = self._conn() if callable(self._conn) else self._conn
+        if conn is None:
+            log.warning("PTT/CW keyed via %s line but the serial connection isn't up — dropped", self._line)
+            return
+        setattr(conn, self._line, on)
 
 
 class RadioBridge:
@@ -165,7 +183,7 @@ class RadioBridge:
     def _build_key_method(self, key_cfg: dict):
         method = key_cfg["method"]
         if method == "civ":
-            return CivKey(self.serial_proto.transport, key_cfg["civ_address"])
+            return CivKey(self.serial_proto, key_cfg["civ_address"])
         if method in ("rts", "dtr"):
             port = key_cfg.get("serial_port")
             if port and port != self.cfg["cat"]["serial_port"]:
@@ -176,7 +194,9 @@ class RadioBridge:
                     self._extra_serials[port] = conn
                 conn = self._extra_serials[port]
             else:
-                conn = self.serial_proto.transport.serial  # reuse the CAT connection's line
+                # reuse the CAT connection's line — lazy: its transport
+                # may not be up yet at this exact instant, see CivKey.
+                conn = lambda: self.serial_proto.transport.serial if self.serial_proto.transport else None
             return LineKey(conn, method)
         raise ValueError(f"unknown key method for {self.name}: {method}")
 
@@ -306,6 +326,41 @@ if __name__ == "__main__":
         def set(self, on):
             self.calls.append(on)
 
+    def _demo_lazy_keys():
+        # Reproduces the reported crash: PTT/CW keyed while
+        # serial_proto.transport is still None (serial_asyncio's
+        # connection_made hasn't run via call_soon yet, or the port
+        # physically disconnected) must drop the key event, not raise.
+        class _FakeSerialProto:
+            def __init__(self):
+                self.transport = None
+
+        class _FakeTransport:
+            def __init__(self):
+                self.written = []
+
+            def write(self, data):
+                self.written.append(data)
+
+        proto = _FakeSerialProto()
+        key = CivKey(proto, 148)
+        key.set(True)  # transport still None — must not raise
+
+        proto.transport = _FakeTransport()
+        key.set(True)
+        assert proto.transport.written == [ptt_command(148, True)]
+
+        class _FakeSerialConn:
+            rts = None
+
+        holder = {"conn": None}
+        line_key = LineKey(lambda: holder["conn"], "rts")
+        line_key.set(True)  # still None — must not raise
+
+        holder["conn"] = _FakeSerialConn()
+        line_key.set(True)
+        assert holder["conn"].rts is True
+
     async def _demo():
         bridge = RadioBridge({"name": "TEST"}, NullDb())
         bridge.cw_method = _FakeKey()
@@ -357,6 +412,7 @@ if __name__ == "__main__":
         other_bridge = RadioBridge({"name": "IC-746PRO"}, _FakeAuthDb())
         assert await other_bridge._authorize("ivan", "secret") is False  # right password, NOT permitted for this radio
 
+    _demo_lazy_keys()
     asyncio.run(_demo())
     asyncio.run(_demo_authorize())
     print("radio_bridge.py: ok")

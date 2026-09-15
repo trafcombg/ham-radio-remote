@@ -1,12 +1,16 @@
 {
-  "username": "ivan",
-  "password": "",
+  "username": "lz4tl",
   "server_host": "192.168.18.118",
   "server_api_port": 8080,
   "com": {
     "baud": 19200
   },
-  "com_ports": {},
+  "com_ports": {
+    "IC-7300": {
+      "local": "COM20",
+      "internal": "COM21"
+    }
+  },
   "audio": {
     "input_device": null,
     "output_device": null,
@@ -31,19 +35,13 @@
   "radios": [
     {
       "name": "IC-7300",
+      "active": true,
       "cat_port": 4532,
       "control_port": 4632,
       "audio_port": 5004,
       "cw_port": 5104,
       "civ_address": 148
-    },
-    {
-      "name": "IC-746PRO",
-      "cat_port": 4533,
-      "control_port": 4633,
-      "audio_port": 5006,
-      "cw_port": 5106,
-      "civ_address": null
     }
-  ]
+  ],
+  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAADzvWvhQdH+H8UdWS1NG6EdYyyozE6R2iZDYAwrKRSyiAAAAAAOgAAAAAIAACAAAAArOnVsmmX+DZMMHonnSFm3O1vf9lI/pk77r32+HSPxnBAAAACERcmvGaFLF849pr9mhbFMQAAAALuPbvPy7OrxXsq/CbTA/KTWAbtX2AdpfsZH6/dmKWI/ERyQz2++aLAV6qC5Io8w3ShumMQTKxo4z+G6QsCLAEA="
 }

@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
+from client import credential_store
 from client.settings_dialog import SettingsDialog
 from common.updater import download_and_run_installer
 from common.version import APP_VERSION
@@ -47,6 +48,11 @@ class MainWindow(QWidget):
         self.level_bar.setRange(0, 100)
         self.level_bar.setTextVisible(False)
 
+        self.output_level_bar = QProgressBar()
+        self.output_level_bar.setRange(0, 100)
+        self.output_level_bar.setTextVisible(False)
+        self.output_level_bar.setStyleSheet("QProgressBar::chunk { background-color: #3b82f6; }")
+
         audio_cfg = app_cfg["audio"]
         self.mic_gain_slider = QSlider(Qt.Horizontal)
         self.mic_gain_slider.setRange(0, 200)
@@ -81,10 +87,11 @@ class MainWindow(QWidget):
         layout.addWidget(self.radio_list)
         layout.addWidget(self.status_label)
         layout.addWidget(self.ptt_button)
-        layout.addWidget(self.level_bar)
         layout.addWidget(QLabel("Микрофон (вход)"))
+        layout.addWidget(self.level_bar)
         layout.addWidget(self.mic_gain_slider)
         layout.addWidget(QLabel("Говорител (изход)"))
+        layout.addWidget(self.output_level_bar)
         layout.addWidget(self.speaker_gain_slider)
         layout.addWidget(self.cw_key_button)
         cw_row = QHBoxLayout()
@@ -112,7 +119,11 @@ class MainWindow(QWidget):
 
         active_radios = [r for r in app_cfg["radios"] if r.get("active", True)]
         if active_radios:
-            first_row = next(i for i in range(self.radio_list.count()) if self.radio_list.item(i).data(1000) is active_radios[0])
+            # Compare by name, not identity: PySide6's QVariant storage
+            # doesn't guarantee item.data() returns the exact same Python
+            # object that was passed to setData() for a plain dict.
+            first_name = active_radios[0]["name"]
+            first_row = next(i for i in range(self.radio_list.count()) if self.radio_list.item(i).data(1000)["name"] == first_name)
             self.radio_list.setCurrentRow(first_row)
             self._switch_radio(active_radios[0])
 
@@ -150,15 +161,16 @@ class MainWindow(QWidget):
 
     def _open_settings(self):
         active_radios = [r for r in self.app_cfg["radios"] if r.get("active", True)]
+        current_password = credential_store.decrypt(self.app_cfg.get("password_encrypted", ""))
         dialog = SettingsDialog(
-            self.app_cfg["server_host"], self.app_cfg.get("password", ""), self.app_cfg["cw"], self.app_cfg["rc28"],
+            self.app_cfg["server_host"], current_password, self.app_cfg["cw"], self.app_cfg["rc28"],
             self.app_cfg.get("com_ports", {}), active_radios, self,
         )
         if dialog.exec():
             new_server_host = dialog.result_server_host()
             new_password = dialog.result_password()
-            password_changed = new_password != self.app_cfg.get("password", "")
-            self.app_cfg["password"] = new_password
+            password_changed = new_password != current_password
+            self.app_cfg["password_encrypted"] = credential_store.encrypt(new_password)
             self.session.password = new_password
             self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
             self.app_cfg["rc28"] = dialog.result_rc28_cfg(self.app_cfg["rc28"])
@@ -248,6 +260,7 @@ class MainWindow(QWidget):
 
         if not self.session.control:
             self.level_bar.setValue(0)
+            self.output_level_bar.setValue(0)
             return
 
         if self.session.control.last_notice:
@@ -269,4 +282,8 @@ class MainWindow(QWidget):
             self.status_label.setText("Свързан")
 
         if self.session.audio:
-            self.level_bar.setValue(min(100, int(self.session.audio.level / 200 * 100)))
+            self.level_bar.setValue(min(100, int(self.session.audio.input_level / 200 * 100)))
+            self.output_level_bar.setValue(min(100, int(self.session.audio.output_level / 200 * 100)))
+        else:
+            self.level_bar.setValue(0)
+            self.output_level_bar.setValue(0)

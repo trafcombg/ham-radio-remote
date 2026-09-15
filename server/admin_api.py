@@ -259,6 +259,21 @@ async def list_devices(admin=Depends(require_admin)):
     }
 
 
+@app.get("/api/radios/levels")
+async def radio_audio_levels(request: Request, admin=Depends(require_admin)):
+    """Lightweight, polled frequently by the admin panel's level meters —
+    deliberately separate from /api/radios so a fast poll loop doesn't
+    re-run that route's fuller config/status work."""
+    manager = get_manager(request)
+    return {
+        name: {
+            "input": bridge.audio.input_level if bridge.audio else 0,
+            "output": bridge.audio.output_level if bridge.audio else 0,
+        }
+        for name, bridge in manager.bridges.items()
+    }
+
+
 @app.get("/api/client/radios")
 async def list_client_radios(request: Request):
     """No admin auth — the desktop client never logs in, it just needs to

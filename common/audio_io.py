@@ -32,7 +32,8 @@ def _apply_gain(samples: np.ndarray, gain: float) -> np.ndarray:
 class AudioLink:
     def __init__(self, input_device, output_device, listen_port, peer=None, mic_gain=1.0, speaker_gain=1.0):
         self.peer = peer
-        self.level = 0.0  # last mic frame's mean abs amplitude, for a UI meter
+        self.input_level = 0.0   # last mic frame's mean abs amplitude, for a UI meter
+        self.output_level = 0.0  # last speaker frame's mean abs amplitude, for a UI meter
         self.mic_gain = mic_gain          # 1.0 = unity; adjustable live from the UI
         self.speaker_gain = speaker_gain
 
@@ -64,7 +65,7 @@ class AudioLink:
     def _on_mic(self, indata, frames, time_info, status):
         if status:
             log.warning("input status: %s", status)
-        self.level = float(np.abs(indata).mean())
+        self.input_level = float(np.abs(indata).mean())
         if not self.peer:
             return
         try:
@@ -82,12 +83,14 @@ class AudioLink:
             data, addr = self.sock.recvfrom(FRAME_BYTES)
         except BlockingIOError:
             outdata.fill(0)
+            self.output_level = 0.0
             return
         if self.peer is None:
             self.peer = addr
             log.info("audio peer learned: %s", addr)
         samples = np.frombuffer(data, dtype=np.int16).reshape(-1, CHANNELS)
         samples = _apply_gain(samples, self.speaker_gain)
+        self.output_level = float(np.abs(samples).mean())
         n = min(len(samples), frames)
         outdata[:n] = samples[:n]
         if n < frames:
