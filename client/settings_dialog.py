@@ -1,6 +1,6 @@
-"""CW source and RC-28 settings — deliberately a separate, non-main
-screen (per the project plan): these are configured once per operator
-setup, not touched during a QSO."""
+"""Server address, CW source and RC-28 settings — deliberately a
+separate, non-main screen (per the project plan): these are configured
+once per operator setup, not touched during a QSO."""
 
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox,
@@ -8,9 +8,12 @@ from PySide6.QtWidgets import (
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, cw_cfg: dict, rc28_cfg: dict, parent=None):
+    def __init__(self, server_host: str, cw_cfg: dict, rc28_cfg: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Настройки — CW и RC-28")
+        self.setWindowTitle("Настройки — сървър, CW и RC-28")
+
+        self.server_host = QLineEdit(server_host)
+        self.server_host.setPlaceholderText("IP или име на сървъра, напр. 192.168.1.10")
 
         self.source = QComboBox()
         self.source.addItem("Прав ключ", "straight")
@@ -37,6 +40,7 @@ class SettingsDialog(QDialog):
         self.rc28_step.setSuffix(" Hz / стъпка на диска")
 
         form = QFormLayout(self)
+        form.addRow("Сървър", self.server_host)
         form.addRow("CW източник", self.source)
         form.addRow("Скорост (WPM)", self.wpm)
         form.addRow("Paddle порт", self.paddle_port)
@@ -48,6 +52,9 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def result_server_host(self) -> str:
+        return self.server_host.text().strip()
 
     def result_cw_cfg(self, base_cw_cfg: dict) -> dict:
         cfg = dict(base_cw_cfg)

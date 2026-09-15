@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<title>HAM Radio Remote — Първоначална настройка</title>
+<style>
+  body { font-family: sans-serif; background: #1b1f24; color: #eee; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  form { background: #262b33; padding: 2rem; border-radius: 8px; width: 320px; }
+  h1 { font-size: 1.1rem; margin-top: 0; }
+  p { font-size: .85rem; color: #aaa; }
+  input { width: 100%; box-sizing: border-box; padding: .5rem; margin-bottom: .75rem; border-radius: 4px; border: 1px solid #444; background: #1b1f24; color: #eee; }
+  button { width: 100%; padding: .6rem; border: none; border-radius: 4px; background: #3b82f6; color: white; cursor: pointer; }
+  #error { color: #f87171; font-size: .9rem; min-height: 1.2em; }
+  #dbWarning { color: #f59e0b; font-size: .85rem; }
+</style>
+</head>
+<body>
+<form id="setupForm">
+  <h1>Добре дошъл — първоначална настройка</h1>
+  <p>Базата данни е готова (таблиците се създават автоматично). Създай първия admin потребител, за да влезеш в панела и да добавиш радиата.</p>
+  <div id="dbWarning"></div>
+  <input id="username" placeholder="Admin потребител" autocomplete="username">
+  <input id="password" type="password" placeholder="Парола (мин. 4 символа)" autocomplete="new-password">
+  <div id="error"></div>
+  <button type="submit">Създай admin и влез</button>
+</form>
+<script>
+(async () => {
+  const res = await fetch("/api/setup-status");
+  const status = await res.json();
+  if (!status.db_configured) {
+    document.getElementById("dbWarning").textContent =
+      "PostgreSQL не е конфигуриран (server/config.json, db.dsn) — попълни го и рестартирай сървъра.";
+    document.getElementById("setupForm").querySelector("button").disabled = true;
+    return;
+  }
+  if (!status.needs_setup) { location.href = "/login"; }
+})();
+
+document.getElementById("setupForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const setupRes = await fetch("/api/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!setupRes.ok) {
+    const body = await setupRes.json().catch(() => ({}));
+    document.getElementById("error").textContent = body.detail || "грешка при настройка";
+    return;
+  }
+  const loginRes = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (loginRes.ok) {
+    location.href = "/";
+  } else {
+    location.href = "/login";
+  }
+});
+</script>
+</body>
+</html>

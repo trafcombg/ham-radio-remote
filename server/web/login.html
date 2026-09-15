@@ -21,6 +21,16 @@
   <button type="submit">Вход</button>
 </form>
 <script>
+(async () => {
+  const res = await fetch("/api/setup-status");
+  const status = await res.json();
+  if (status.needs_setup) { location.href = "/setup"; return; }
+  if (!status.db_configured) {
+    document.getElementById("error").textContent =
+      "PostgreSQL не е конфигуриран (server/config.json, db.dsn) — admin панелът е недостъпен.";
+  }
+})();
+
 document.getElementById("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const username = document.getElementById("username").value;

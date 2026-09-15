@@ -2,10 +2,10 @@ import asyncio
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QProgressBar,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from client.settings_dialog import SettingsDialog
@@ -39,6 +39,17 @@ class MainWindow(QWidget):
         self.level_bar.setRange(0, 100)
         self.level_bar.setTextVisible(False)
 
+        audio_cfg = app_cfg["audio"]
+        self.mic_gain_slider = QSlider(Qt.Horizontal)
+        self.mic_gain_slider.setRange(0, 200)
+        self.mic_gain_slider.setValue(int(audio_cfg.get("mic_gain", 1.0) * 100))
+        self.mic_gain_slider.valueChanged.connect(self._on_mic_gain_changed)
+
+        self.speaker_gain_slider = QSlider(Qt.Horizontal)
+        self.speaker_gain_slider.setRange(0, 200)
+        self.speaker_gain_slider.setValue(int(audio_cfg.get("speaker_gain", 1.0) * 100))
+        self.speaker_gain_slider.valueChanged.connect(self._on_speaker_gain_changed)
+
         self.cw_key_button = QPushButton("CW ключ (задръж)")
         self.cw_text_input = QLineEdit()
         self.cw_text_input.setPlaceholderText("текст за CW")
@@ -57,6 +68,10 @@ class MainWindow(QWidget):
         layout.addWidget(self.status_label)
         layout.addWidget(self.ptt_button)
         layout.addWidget(self.level_bar)
+        layout.addWidget(QLabel("Микрофон (вход)"))
+        layout.addWidget(self.mic_gain_slider)
+        layout.addWidget(QLabel("Говорител (изход)"))
+        layout.addWidget(self.speaker_gain_slider)
         layout.addWidget(self.cw_key_button)
         cw_row = QHBoxLayout()
         cw_row.addWidget(self.cw_text_input)
@@ -100,15 +115,32 @@ class MainWindow(QWidget):
         if text and self.session.text_cw:
             asyncio.run_coroutine_threadsafe(self.session.text_cw.send(text), self.loop)
 
+    def _on_mic_gain_changed(self, value: int):
+        gain = value / 100.0
+        self.app_cfg["audio"]["mic_gain"] = gain
+        if self.session.audio:
+            self.session.audio.mic_gain = gain
+
+    def _on_speaker_gain_changed(self, value: int):
+        gain = value / 100.0
+        self.app_cfg["audio"]["speaker_gain"] = gain
+        if self.session.audio:
+            self.session.audio.speaker_gain = gain
+
     def _open_settings(self):
-        dialog = SettingsDialog(self.app_cfg["cw"], self.app_cfg["rc28"], self)
+        dialog = SettingsDialog(self.app_cfg["server_host"], self.app_cfg["cw"], self.app_cfg["rc28"], self)
         if dialog.exec():
+            new_server_host = dialog.result_server_host()
             self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
             self.app_cfg["rc28"] = dialog.result_rc28_cfg(self.app_cfg["rc28"])
             self.config_path.write_text(json.dumps(self.app_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
-            current = self.radio_list.currentItem()
-            if current:
-                self._switch_radio(current.data(1000))
+            if new_server_host and new_server_host != self.session.server_host:
+                asyncio.run_coroutine_threadsafe(self.session.reconnect(new_server_host), self.loop)
+                self.status_label.setText("Свързване...")
+            else:
+                current = self.radio_list.currentItem()
+                if current:
+                    self._switch_radio(current.data(1000))
 
     def _apply_update(self):
         update = self.update_state.available

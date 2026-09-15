@@ -8,7 +8,9 @@
   "audio": {
     "input_device": null,
     "output_device": null,
-    "local_port": 5007
+    "local_port": 5007,
+    "mic_gain": 1.0,
+    "speaker_gain": 1.0
   },
   "cw": {
     "local_port": 5107,

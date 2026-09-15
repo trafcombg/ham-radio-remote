@@ -78,6 +78,8 @@ class RadioSession:
             output_device=audio_cfg.get("output_device"),
             listen_port=audio_cfg["local_port"],
             peer=(self.server_host, radio_cfg["audio_port"]),
+            mic_gain=audio_cfg.get("mic_gain", 1.0),
+            speaker_gain=audio_cfg.get("speaker_gain", 1.0),
         )
         self.audio.start()
 
@@ -128,6 +130,24 @@ class RadioSession:
         if self.winkeyer:
             self.winkeyer.stop()
             self.winkeyer = None
+
+    async def reconnect(self, new_server_host: str):
+        """Switches every connection (status watchers + the active radio,
+        if any) over to a different server address."""
+        self.server_host = new_server_host
+        self.app_cfg["server_host"] = new_server_host
+
+        for client in self.status_clients.values():
+            if client.writer:
+                client.writer.close()
+        self.status_clients = {}
+        await self.start_status_watchers()
+
+        radio_name = self.radio_name
+        if radio_name:
+            radio_cfg = next((r for r in self.app_cfg["radios"] if r["name"] == radio_name), None)
+            if radio_cfg:
+                await self.switch_to(radio_cfg)
 
     async def shutdown(self):
         await self._teardown()

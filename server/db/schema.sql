@@ -1,6 +1,9 @@
--- Applied by server/db.py (PostgresDb) starting Phase 2, when db.dsn is set
--- in server/config.json. Run this once against that database before
--- starting the server: psql <dsn> -f server/db/schema.sql
+-- Applied automatically by server/db.py (PostgresDb.connect) on every
+-- server startup, whenever db.dsn is set in server/config.json — no
+-- manual `psql -f schema.sql` step needed. CREATE TABLE IF NOT EXISTS
+-- and ADD COLUMN IF NOT EXISTS make re-running this on an already
+-- migrated database a safe no-op, so new columns added here reach
+-- existing installs automatically too.
 
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -49,6 +52,8 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     audio_name_contains TEXT,
     audio_endpoint_id TEXT,
     audio_udp_port INTEGER NOT NULL,
+    audio_input_gain REAL NOT NULL DEFAULT 1.0,
+    audio_output_gain REAL NOT NULL DEFAULT 1.0,
     ptt_method TEXT NOT NULL DEFAULT 'civ',
     ptt_civ_address INTEGER,
     ptt_serial_port TEXT,
@@ -85,3 +90,8 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
     temp_c REAL,
     fault BOOLEAN
 );
+
+-- Migration for radio_configs created before audio gain controls existed —
+-- a no-op on a fresh database (the CREATE TABLE above already has them).
+ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
+ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_gain REAL NOT NULL DEFAULT 1.0;

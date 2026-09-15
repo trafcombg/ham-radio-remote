@@ -94,6 +94,8 @@ class RadioBridge:
             input_device=audio_cfg.get("input_device"),
             output_device=audio_cfg.get("output_device"),
             listen_port=audio_cfg["udp_port"],
+            mic_gain=audio_cfg.get("input_gain", 1.0),
+            speaker_gain=audio_cfg.get("output_gain", 1.0),
         )
         self.audio.start()
 

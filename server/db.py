@@ -8,6 +8,8 @@ import hmac
 import logging
 import os
 
+from common.app_paths import app_dir
+
 log = logging.getLogger("db")
 
 
@@ -37,6 +39,8 @@ def _radio_cfg_to_row(cfg: dict) -> dict:
         "audio_name_contains": cfg["audio"].get("name_contains"),
         "audio_endpoint_id": cfg["audio"].get("endpoint_id"),
         "audio_udp_port": cfg["audio"]["udp_port"],
+        "audio_input_gain": cfg["audio"].get("input_gain", 1.0),
+        "audio_output_gain": cfg["audio"].get("output_gain", 1.0),
         "ptt_method": cfg["ptt"]["method"],
         "ptt_civ_address": cfg["ptt"].get("civ_address"),
         "ptt_serial_port": cfg["ptt"].get("serial_port"),
@@ -61,6 +65,7 @@ def _row_to_radio_cfg(row) -> dict:
         "audio": {
             "name_contains": row["audio_name_contains"], "endpoint_id": row["audio_endpoint_id"],
             "udp_port": row["audio_udp_port"],
+            "input_gain": row["audio_input_gain"], "output_gain": row["audio_output_gain"],
         },
         "ptt": {
             "method": row["ptt_method"], "civ_address": row["ptt_civ_address"],
@@ -125,6 +130,19 @@ class PostgresDb:
 
         self.pool = await asyncpg.create_pool(self.dsn)
         log.info("connected to PostgreSQL")
+        await self._apply_schema()
+
+    async def _apply_schema(self):
+        """Creates whatever tables are missing — CREATE TABLE IF NOT
+        EXISTS throughout schema.sql makes this safe to run on every
+        startup, so there's no separate manual "set up the database"
+        step: point db.dsn at any empty (or already-migrated) Postgres
+        database and this does the rest."""
+        schema_path = app_dir(__file__) / "db" / "schema.sql"
+        sql = schema_path.read_text(encoding="utf-8")
+        async with self.pool.acquire() as c:
+            await c.execute(sql)
+        log.info("database schema up to date (%s)", schema_path)
 
     async def _user_id(self, username):
         async with self.pool.acquire() as c:
@@ -183,6 +201,11 @@ class PostgresDb:
                 username, digest, salt, is_admin,
             )
 
+    async def has_any_admin(self) -> bool:
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow("SELECT 1 FROM users WHERE is_admin = true LIMIT 1")
+        return row is not None
+
     async def authenticate(self, username, password):
         async with self.pool.acquire() as c:
             row = await c.fetchrow(
@@ -207,9 +230,10 @@ class PostgresDb:
                 INSERT INTO radio_configs (
                     name, model, cat_vid, cat_pid, cat_serial_number, cat_location, cat_serial_port,
                     cat_baud, cat_tcp_port, control_port, audio_name_contains, audio_endpoint_id,
-                    audio_udp_port, ptt_method, ptt_civ_address, ptt_serial_port,
+                    audio_udp_port, audio_input_gain, audio_output_gain,
+                    ptt_method, ptt_civ_address, ptt_serial_port,
                     cw_udp_port, cw_method, cw_civ_address, cw_serial_port, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now())
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, now())
                 ON CONFLICT (name) DO UPDATE SET
                     model = EXCLUDED.model, cat_vid = EXCLUDED.cat_vid, cat_pid = EXCLUDED.cat_pid,
                     cat_serial_number = EXCLUDED.cat_serial_number, cat_location = EXCLUDED.cat_location,
@@ -217,7 +241,9 @@ class PostgresDb:
                     cat_tcp_port = EXCLUDED.cat_tcp_port, control_port = EXCLUDED.control_port,
                     audio_name_contains = EXCLUDED.audio_name_contains,
                     audio_endpoint_id = EXCLUDED.audio_endpoint_id,
-                    audio_udp_port = EXCLUDED.audio_udp_port, ptt_method = EXCLUDED.ptt_method,
+                    audio_udp_port = EXCLUDED.audio_udp_port,
+                    audio_input_gain = EXCLUDED.audio_input_gain, audio_output_gain = EXCLUDED.audio_output_gain,
+                    ptt_method = EXCLUDED.ptt_method,
                     ptt_civ_address = EXCLUDED.ptt_civ_address, ptt_serial_port = EXCLUDED.ptt_serial_port,
                     cw_udp_port = EXCLUDED.cw_udp_port, cw_method = EXCLUDED.cw_method,
                     cw_civ_address = EXCLUDED.cw_civ_address, cw_serial_port = EXCLUDED.cw_serial_port,
@@ -226,7 +252,8 @@ class PostgresDb:
                 r["name"], r["model"], r["cat_vid"], r["cat_pid"], r["cat_serial_number"],
                 r["cat_location"], r["cat_serial_port"], r["cat_baud"], r["cat_tcp_port"],
                 r["control_port"], r["audio_name_contains"], r["audio_endpoint_id"],
-                r["audio_udp_port"], r["ptt_method"], r["ptt_civ_address"], r["ptt_serial_port"],
+                r["audio_udp_port"], r["audio_input_gain"], r["audio_output_gain"],
+                r["ptt_method"], r["ptt_civ_address"], r["ptt_serial_port"],
                 r["cw_udp_port"], r["cw_method"], r["cw_civ_address"], r["cw_serial_port"],
             )
 

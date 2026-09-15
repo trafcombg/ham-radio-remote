@@ -61,6 +61,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SetupRequest(BaseModel):
+    username: str
+    password: str
+
+
 class RadioCatConfig(BaseModel):
     vid: int | None = None
     pid: int | None = None
@@ -75,6 +80,8 @@ class RadioAudioConfig(BaseModel):
     name_contains: str | None = None
     endpoint_id: str | None = None
     udp_port: int
+    input_gain: float = 1.0
+    output_gain: float = 1.0
 
 
 class RadioPttConfig(BaseModel):
@@ -136,6 +143,35 @@ async def index():
 @app.get("/login")
 async def login_page():
     return FileResponse(WEB_DIR / "login.html")
+
+
+@app.get("/setup")
+async def setup_page():
+    return FileResponse(WEB_DIR / "setup.html")
+
+
+@app.get("/api/setup-status")
+async def setup_status(request: Request):
+    db = get_db(request)
+    if not isinstance(db, PostgresDb):
+        return {"db_configured": False, "needs_setup": False}
+    return {"db_configured": True, "needs_setup": not await db.has_any_admin()}
+
+
+@app.post("/api/setup")
+async def setup(body: SetupRequest, request: Request):
+    """Creates the first admin account from the browser — no command
+    line needed. Only works once: refuses as soon as any admin exists,
+    same as create_admin.py would need re-running for a second account."""
+    db = get_db(request)
+    if not isinstance(db, PostgresDb):
+        raise HTTPException(status_code=503, detail="PostgreSQL не е конфигуриран (db.dsn)")
+    if await db.has_any_admin():
+        raise HTTPException(status_code=409, detail="вече има admin — влез през /login")
+    if not body.username or len(body.password) < 4:
+        raise HTTPException(status_code=400, detail="потребител и парола (мин. 4 символа) са задължителни")
+    await db.create_user(body.username, body.password, is_admin=True)
+    return {"ok": True}
 
 
 @app.post("/api/login")

@@ -35,6 +35,9 @@
   <form id="editForm">
     <label>Име<input name="name" required></label>
     <label>Модел<input name="model"></label>
+    <label>Открито CAT устройство
+      <select id="catDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
+    </label>
     <div class="row">
       <div><label>CAT сериен порт<input name="serial_port" placeholder="COM5 (или празно, ако ползваш VID:PID)"></label></div>
       <div><label>Baud<input name="baud" type="number" value="19200"></label></div>
@@ -44,12 +47,21 @@
       <div><label>PID (hex)<input name="pid" placeholder="напр. EA60"></label></div>
     </div>
     <label>Сериен номер (по избор, при съвпадащи VID:PID)<input name="serial_number"></label>
+    <input type="hidden" name="location">
     <div class="row">
       <div><label>CAT TCP порт<input name="tcp_port" type="number" required></label></div>
       <div><label>Control порт<input name="control_port" type="number" required></label></div>
     </div>
+    <label>Открито аудио устройство
+      <select id="audioDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
+    </label>
     <label>Аудио устройство (име съдържа)<input name="audio_name_contains" placeholder="напр. USB Audio CODEC"></label>
+    <input type="hidden" name="audio_endpoint_id">
     <label>Аудио UDP порт<input name="audio_udp_port" type="number" required></label>
+    <div class="row">
+      <div><label>Вход (микрофон/радио→сървър) сила<input name="audio_input_gain" type="number" step="0.1" value="1.0"></label></div>
+      <div><label>Изход (сървър→радио) сила<input name="audio_output_gain" type="number" step="0.1" value="1.0"></label></div>
+    </div>
     <label>PTT метод
       <select name="ptt_method">
         <option value="civ">CAT команда (CI-V)</option>
@@ -167,11 +179,55 @@ const dialog = document.getElementById("editDialog");
 const form = document.getElementById("editForm");
 let editingOriginalName = null;
 
-function openEdit(r) {
+const catDeviceSelect = document.getElementById("catDeviceSelect");
+const audioDeviceSelect = document.getElementById("audioDeviceSelect");
+let scannedDevices = { serial: [], audio: [] };
+
+async function loadDeviceOptions() {
+  const res = await api("/api/devices");
+  scannedDevices = await res.json();
+
+  catDeviceSelect.innerHTML = '<option value="">— Ръчно въвеждане по-долу —</option>';
+  scannedDevices.serial.forEach((d, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    const vidpid = d.vid != null ? `${d.vid.toString(16)}:${d.pid.toString(16)}` : "?";
+    opt.textContent = `${d.port} — ${vidpid}${d.serial_number ? " SN:" + d.serial_number : ""}`;
+    catDeviceSelect.appendChild(opt);
+  });
+
+  audioDeviceSelect.innerHTML = '<option value="">— Ръчно въвеждане по-долу —</option>';
+  scannedDevices.audio.forEach((d, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = `[${d.index}] ${d.name}`;
+    audioDeviceSelect.appendChild(opt);
+  });
+}
+
+catDeviceSelect.onchange = () => {
+  if (catDeviceSelect.value === "") return;
+  const d = scannedDevices.serial[parseInt(catDeviceSelect.value)];
+  form.serial_port.value = d.port;
+  form.vid.value = d.vid != null ? d.vid.toString(16) : "";
+  form.pid.value = d.pid != null ? d.pid.toString(16) : "";
+  form.serial_number.value = d.serial_number || "";
+  form.location.value = d.location || "";
+};
+
+audioDeviceSelect.onchange = () => {
+  if (audioDeviceSelect.value === "") return;
+  const d = scannedDevices.audio[parseInt(audioDeviceSelect.value)];
+  form.audio_name_contains.value = d.name;
+  form.audio_endpoint_id.value = d.endpoint_id || "";
+};
+
+async function openEdit(r) {
   editingOriginalName = r ? r.name : null;
   document.getElementById("dialogTitle").textContent = r ? "Редактирай " + r.name : "Ново радио";
   document.getElementById("testResult").textContent = "";
   form.reset();
+  await loadDeviceOptions();
   if (r) {
     form.name.value = r.name;
     form.model.value = r.model || "";
@@ -180,10 +236,14 @@ function openEdit(r) {
     form.vid.value = r.cat.vid != null ? r.cat.vid.toString(16) : "";
     form.pid.value = r.cat.pid != null ? r.cat.pid.toString(16) : "";
     form.serial_number.value = r.cat.serial_number || "";
+    form.location.value = r.cat.location || "";
     form.tcp_port.value = r.cat.tcp_port;
     form.control_port.value = r.control_port;
     form.audio_name_contains.value = r.audio.name_contains || "";
+    form.audio_endpoint_id.value = r.audio.endpoint_id || "";
     form.audio_udp_port.value = r.audio.udp_port;
+    form.audio_input_gain.value = r.audio.input_gain != null ? r.audio.input_gain : 1.0;
+    form.audio_output_gain.value = r.audio.output_gain != null ? r.audio.output_gain : 1.0;
     form.ptt_method.value = r.ptt.method;
     form.civ_address.value = r.ptt.civ_address || "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";
@@ -207,15 +267,17 @@ function formToCfg() {
       vid: f.get("vid") ? parseInt(f.get("vid"), 16) : null,
       pid: f.get("pid") ? parseInt(f.get("pid"), 16) : null,
       serial_number: f.get("serial_number") || null,
-      location: null,
+      location: f.get("location") || null,
       baud: parseInt(f.get("baud")) || 19200,
       tcp_port: parseInt(f.get("tcp_port")),
     },
     control_port: parseInt(f.get("control_port")),
     audio: {
       name_contains: f.get("audio_name_contains") || null,
-      endpoint_id: null,
+      endpoint_id: f.get("audio_endpoint_id") || null,
       udp_port: parseInt(f.get("audio_udp_port")),
+      input_gain: parseFloat(f.get("audio_input_gain")) || 1.0,
+      output_gain: parseFloat(f.get("audio_output_gain")) || 1.0,
     },
     cw_udp_port: parseInt(f.get("cw_udp_port")),
     ptt: {
