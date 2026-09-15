@@ -4,8 +4,9 @@ confirms, silently downloads and runs the new installer — no manual
 (packaging/installer/*.iss) closes the running app (AppMutex) before
 replacing files, so this only needs to launch it and exit.
 
-GITHUB_REPO is a placeholder — set it to the real "owner/repo" once this
-project has actual GitHub releases before relying on this.
+Checks github.com/trafcombg/ham-radio-remote's releases — publish a
+release there (tag vX.Y.Z, with Server-Setup/Client-Setup installer
+assets) for this to find anything.
 """
 
 import json
@@ -18,7 +19,7 @@ from pathlib import Path
 
 log = logging.getLogger("updater")
 
-GITHUB_REPO = "your-org/ham-radio-remote"  # TODO: set to the real repo before shipping
+GITHUB_REPO = "trafcombg/ham-radio-remote"
 CHECK_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 

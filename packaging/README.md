@@ -36,10 +36,11 @@ bundle-а) — виж `common/app_paths.py`.
 
 **Преди реално разпространение**, задължително провери/попълни:
 - `#define MyAppPublisher` в двата `.iss` файла (твоя call sign/клуб)
-- `GITHUB_REPO` в `common/updater.py` — реалното repo, откъдето ще идват
-  releases
 - Силните флагове за com0com/PostgreSQL инсталаторите — варират по
   версия, виж коментарите в `.iss` файловете и `redist/README.md`
+
+`GITHUB_REPO` в `common/updater.py` вече сочи към
+[github.com/trafcombg/ham-radio-remote](https://github.com/trafcombg/ham-radio-remote).
 
 ## 3. Auto-update (`common/updater.py`)
 
