@@ -102,6 +102,7 @@ class RadioConfigRequest(BaseModel):
     cw_udp_port: int
     ptt: RadioPttConfig
     cw: RadioPttConfig | None = None  # null = CW keys the same line as ptt
+    active: bool = True
     force: bool = False
 
 
@@ -135,6 +136,7 @@ def _to_cfg_dict(body: RadioConfigRequest) -> dict:
         "cw_udp_port": body.cw_udp_port,
         "ptt": body.ptt.model_dump(),
         "cw": body.cw.model_dump() if body.cw else None,
+        "active": body.active,
     }
 
 
@@ -224,6 +226,30 @@ async def list_devices(admin=Depends(require_admin)):
     return {
         "serial": [d.__dict__ for d in scan_serial_devices()],
         "audio": [d.__dict__ for d in scan_audio_devices()],
+    }
+
+
+@app.get("/api/client/radios")
+async def list_client_radios(request: Request):
+    """No admin auth — the desktop client never logs in, it just needs to
+    know which radios exist and what ports to reach them on. Returns every
+    radio (not just active ones) so the client can grey out inactive ones
+    instead of silently hiding them."""
+    manager = get_manager(request)
+    configs = await manager.list_configs()
+    return {
+        "radios": [
+            {
+                "name": c["name"],
+                "active": c.get("active", True),
+                "cat_port": c["cat"]["tcp_port"],
+                "control_port": c["control_port"],
+                "audio_port": c["audio"]["udp_port"],
+                "cw_port": c["cw_udp_port"],
+                "civ_address": (c.get("ptt") or {}).get("civ_address"),
+            }
+            for c in configs
+        ]
     }
 
 

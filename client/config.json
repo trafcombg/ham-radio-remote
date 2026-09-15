@@ -1,15 +1,16 @@
 {
   "username": "ivan",
-  "server_host": "127.0.0.1",
+  "server_host": "192.168.18.118",
+  "server_api_port": 8080,
   "com": {
-    "local_port": "COM11",
     "baud": 19200
   },
+  "com_ports": {},
   "audio": {
     "input_device": null,
     "output_device": null,
     "local_port": 5005,
-    "mic_gain": 1.0,
+    "mic_gain": 0.84,
     "speaker_gain": 1.0
   },
   "cw": {
@@ -23,7 +24,7 @@
     "winkeyer_baud": 1200
   },
   "rc28": {
-    "enabled": false,
+    "enabled": true,
     "step_hz": 10
   },
   "radios": [

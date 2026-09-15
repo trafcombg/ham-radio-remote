@@ -50,6 +50,7 @@ def _radio_cfg_to_row(cfg: dict) -> dict:
         "cw_method": (cfg.get("cw") or {}).get("method"),
         "cw_civ_address": (cfg.get("cw") or {}).get("civ_address"),
         "cw_serial_port": (cfg.get("cw") or {}).get("serial_port"),
+        "active": cfg.get("active", True),
     }
 
 
@@ -84,6 +85,7 @@ def _row_to_radio_cfg(row) -> dict:
             }
             if row["cw_method"] else None
         ),
+        "active": row["active"],
     }
 
 
@@ -239,8 +241,8 @@ class PostgresDb:
                     audio_output_name_contains, audio_output_endpoint_id,
                     audio_udp_port, audio_input_gain, audio_output_gain,
                     ptt_method, ptt_civ_address, ptt_serial_port,
-                    cw_udp_port, cw_method, cw_civ_address, cw_serial_port, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24, now())
+                    cw_udp_port, cw_method, cw_civ_address, cw_serial_port, active, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25, now())
                 ON CONFLICT (name) DO UPDATE SET
                     model = EXCLUDED.model, cat_vid = EXCLUDED.cat_vid, cat_pid = EXCLUDED.cat_pid,
                     cat_serial_number = EXCLUDED.cat_serial_number, cat_location = EXCLUDED.cat_location,
@@ -256,6 +258,7 @@ class PostgresDb:
                     ptt_civ_address = EXCLUDED.ptt_civ_address, ptt_serial_port = EXCLUDED.ptt_serial_port,
                     cw_udp_port = EXCLUDED.cw_udp_port, cw_method = EXCLUDED.cw_method,
                     cw_civ_address = EXCLUDED.cw_civ_address, cw_serial_port = EXCLUDED.cw_serial_port,
+                    active = EXCLUDED.active,
                     updated_at = now()
                 """,
                 r["name"], r["model"], r["cat_vid"], r["cat_pid"], r["cat_serial_number"],
@@ -266,6 +269,7 @@ class PostgresDb:
                 r["audio_udp_port"], r["audio_input_gain"], r["audio_output_gain"],
                 r["ptt_method"], r["ptt_civ_address"], r["ptt_serial_port"],
                 r["cw_udp_port"], r["cw_method"], r["cw_civ_address"], r["cw_serial_port"],
+                r["active"],
             )
 
     async def delete_radio_config(self, name):
@@ -332,4 +336,22 @@ if __name__ == "__main__":
     assert s1 != s2, "salt must be random per call"
     assert verify_password("hunter2", h1, s1)
     assert not verify_password("wrong", h1, s1)
+
+    cfg = {
+        "name": "TEST", "model": "TEST",
+        "cat": {"baud": 19200, "tcp_port": 4532},
+        "control_port": 4632,
+        "audio": {"udp_port": 5004},
+        "ptt": {"method": "civ"},
+        "cw_udp_port": 5104,
+        "active": False,
+    }
+    row = _radio_cfg_to_row(cfg)
+    assert row["active"] is False
+    back = _row_to_radio_cfg(row)
+    assert back["active"] is False
+    row2 = _radio_cfg_to_row({**cfg, "active": True})
+    assert _row_to_radio_cfg(row2)["active"] is True
+    assert _radio_cfg_to_row({k: v for k, v in cfg.items() if k != "active"})["active"] is True, "active defaults to True"
+
     print("db.py: ok")

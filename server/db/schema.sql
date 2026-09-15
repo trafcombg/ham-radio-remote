@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     cw_method TEXT,       -- null = reuse the ptt_* method (same physical key line)
     cw_civ_address INTEGER,
     cw_serial_port TEXT,
+    active BOOLEAN NOT NULL DEFAULT true,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -97,6 +98,10 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
 -- a no-op on a fresh database (the CREATE TABLE above already has them).
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_gain REAL NOT NULL DEFAULT 1.0;
+
+-- Migration: "active" toggle so a radio can be configured but left unused
+-- (admin panel checkbox) without deleting it — a no-op on a fresh database.
+ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
 
 -- Migration: split the single audio device into independent input/output
 -- devices — mic and speakers are different Windows endpoints even on the

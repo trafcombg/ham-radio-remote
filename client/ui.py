@@ -27,6 +27,8 @@ class MainWindow(QWidget):
         for radio_cfg in app_cfg["radios"]:
             item = QListWidgetItem(radio_cfg["name"])
             item.setData(1000, radio_cfg)
+            if not radio_cfg.get("active", True):
+                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)  # greyed out + unclickable, native Qt look
             self.radio_list.addItem(item)
         self.radio_list.itemClicked.connect(self._on_radio_clicked)
 
@@ -91,9 +93,11 @@ class MainWindow(QWidget):
         self.timer.timeout.connect(self._tick)
         self.timer.start(200)
 
-        if app_cfg["radios"]:
-            self.radio_list.setCurrentRow(0)
-            self._switch_radio(app_cfg["radios"][0])
+        active_radios = [r for r in app_cfg["radios"] if r.get("active", True)]
+        if active_radios:
+            first_row = next(i for i in range(self.radio_list.count()) if self.radio_list.item(i).data(1000) is active_radios[0])
+            self.radio_list.setCurrentRow(first_row)
+            self._switch_radio(active_radios[0])
 
     def _on_radio_clicked(self, item: QListWidgetItem):
         self._switch_radio(item.data(1000))
@@ -128,7 +132,11 @@ class MainWindow(QWidget):
             self.session.audio.speaker_gain = gain
 
     def _open_settings(self):
-        dialog = SettingsDialog(self.app_cfg["server_host"], self.app_cfg["cw"], self.app_cfg["rc28"], self)
+        active_radios = [r for r in self.app_cfg["radios"] if r.get("active", True)]
+        dialog = SettingsDialog(
+            self.app_cfg["server_host"], self.app_cfg["cw"], self.app_cfg["rc28"],
+            self.app_cfg.get("com_ports", {}), active_radios, self,
+        )
         if dialog.exec():
             new_server_host = dialog.result_server_host()
             self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
@@ -162,8 +170,14 @@ class MainWindow(QWidget):
         for i in range(self.radio_list.count()):
             item = self.radio_list.item(i)
             radio_cfg = item.data(1000)
-            busy_by = self.session.radio_status(radio_cfg["name"])
-            label = radio_cfg["name"] + (f" — заето от {busy_by}" if busy_by else " — свободно")
+            name = radio_cfg["name"]
+            com_port = self.session.app_cfg.get("com_ports", {}).get(name, {}).get("local")
+            port_suffix = f" ({com_port})" if com_port else ""
+            if not radio_cfg.get("active", True):
+                label = f"{name}{port_suffix} — неактивно"
+            else:
+                busy_by = self.session.radio_status(name)
+                label = name + port_suffix + (f" — заето от {busy_by}" if busy_by else " — свободно")
             if item.text() != label:
                 item.setText(label)
 
@@ -176,7 +190,8 @@ class MainWindow(QWidget):
             self.session.control.last_notice = None
             return
 
-        connected = self.session.relay is not None and self.session.relay.writer is not None
+        active_relay = self.session.cat_relays.get(self.session.radio_name)
+        connected = active_relay is not None and active_relay.writer is not None
         busy_by = self.session.control.busy_by
         username = self.app_cfg["username"]
         if not connected:

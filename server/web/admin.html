@@ -13,6 +13,7 @@
   button.secondary { background: #4b5563; }
   .busy { color: #f59e0b; }
   .free { color: #34d399; }
+  tr.inactive { opacity: .45; }
   dialog { background: #262b33; color: #eee; border: none; border-radius: 8px; width: 440px; max-width: 90vw; padding: 1.5rem; }
   dialog label { display: block; margin-top: .6rem; font-size: .85rem; color: #aaa; }
   dialog input, dialog select { width: 100%; box-sizing: border-box; padding: .4rem; border-radius: 4px; border: 1px solid #444; background: #1b1f24; color: #eee; margin-top: .2rem; }
@@ -32,13 +33,14 @@
 <button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 <table id="radioTable">
-  <thead><tr><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th></th></tr></thead>
+  <thead><tr><th>Активно</th><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
 <dialog id="editDialog">
   <h2 id="dialogTitle">Радио</h2>
   <form id="editForm">
+    <label><input name="active" type="checkbox" style="width:auto; display:inline-block;" checked> Активно (сървърът го ползва)</label>
     <label>Име<input name="name" required></label>
     <label>Модел<input name="model"></label>
     <label>Открито CAT устройство
@@ -171,7 +173,9 @@ function renderTable() {
     const tr = document.createElement("tr");
     const busy = r.status && r.status.busy_by;
     const catLabel = r.cat.serial_port || (r.cat.vid != null ? r.cat.vid.toString(16) + ":" + r.cat.pid.toString(16) : "?");
+    if (r.active === false) tr.className = "inactive";
     tr.innerHTML = `
+      <td>${r.active === false ? "не" : "да"}</td>
       <td>${r.name}</td>
       <td>${r.model || ""}</td>
       <td>${catLabel}</td>
@@ -270,6 +274,7 @@ async function openEdit(r) {
   form.reset();
   await loadDeviceOptions();
   if (r) {
+    form.active.checked = r.active !== false;
     form.name.value = r.name;
     form.model.value = r.model || "";
     form.serial_port.value = r.cat.serial_port || "";
@@ -306,6 +311,7 @@ function formToCfg() {
   return {
     name: f.get("name"),
     model: f.get("model") || f.get("name"),
+    active: f.get("active") === "on",
     cat: {
       serial_port: f.get("serial_port") || null,
       vid: f.get("vid") ? parseInt(f.get("vid"), 16) : null,

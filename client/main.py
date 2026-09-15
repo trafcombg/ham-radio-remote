@@ -64,9 +64,12 @@ def main():
     cfg = load_config(path)
 
     loop = start_asyncio_thread()
-    session = RadioSession(cfg)
+    session = RadioSession(cfg, path)
     update_state = UpdateState()
-    asyncio.run_coroutine_threadsafe(session.start_status_watchers(), loop)
+    try:
+        asyncio.run_coroutine_threadsafe(session.refresh_radios(), loop).result(timeout=10)
+    except Exception:
+        log.warning("не успях да взема списъка с радиа от сървъра при старт", exc_info=True)
     asyncio.run_coroutine_threadsafe(_update_check_loop(update_state), loop)
 
     app = QApplication(sys.argv)

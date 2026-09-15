@@ -77,6 +77,9 @@ class RadioManager(BridgeManager):
         return [b.cfg for b in self.bridges.values()]
 
     async def _start_radio(self, cfg: dict) -> bool:
+        if not cfg.get("active", True):
+            log.info("radio %s is inactive — skipped", cfg["name"])
+            return True
         serial_devices = scan_serial_devices()
         audio_devices = scan_audio_devices()
         try:

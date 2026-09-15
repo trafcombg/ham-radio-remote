@@ -3,12 +3,12 @@ separate, non-main screen (per the project plan): these are configured
 once per operator setup, not touched during a QSO."""
 
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QSpinBox,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QSpinBox,
 )
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, server_host: str, cw_cfg: dict, rc28_cfg: dict, parent=None):
+    def __init__(self, server_host: str, cw_cfg: dict, rc28_cfg: dict, com_ports: dict, active_radios: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки — сървър, CW и RC-28")
 
@@ -47,6 +47,12 @@ class SettingsDialog(QDialog):
         form.addRow("WinKeyer порт", self.winkeyer_port)
         form.addRow(self.rc28_enabled)
         form.addRow("RC-28 стъпка", self.rc28_step)
+
+        if active_radios:
+            form.addRow(QLabel("<b>Виртуални CAT COM портове (авт. назначени)</b>"))
+            for radio_cfg in active_radios:
+                port = com_ports.get(radio_cfg["name"], {}).get("local", "— (ще се създаде при връзка)")
+                form.addRow(radio_cfg["name"], QLabel(port))
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)

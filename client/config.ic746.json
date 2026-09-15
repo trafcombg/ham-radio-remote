@@ -1,10 +1,11 @@
 {
   "username": "georgi",
   "server_host": "127.0.0.1",
+  "server_api_port": 8080,
   "com": {
-    "local_port": "COM21",
     "baud": 19200
   },
+  "com_ports": {},
   "audio": {
     "input_device": null,
     "output_device": null,
