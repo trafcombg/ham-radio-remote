@@ -26,12 +26,21 @@ FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2  # int16
 
 PEER_WAIT_LOG_INTERVAL_S = 3.0  # throttle — _on_mic/_on_speaker run every 20ms
 ANNOUNCE_INTERVAL_S = 3.0  # how often to re-poke a known peer — see start()
+JITTER_SMOOTHING = 1 / 16  # RFC 3550-style exponential moving average factor
 
 
 def _apply_gain(samples: np.ndarray, gain: float) -> np.ndarray:
     if gain == 1.0:
         return samples
     return np.clip(samples.astype(np.int32) * gain, -32768, 32767).astype(np.int16)
+
+
+def _update_jitter(prev_jitter_ms: float, gap_s: float) -> float:
+    """RFC 3550-style smoothed jitter: how far the spacing between
+    received packets deviates from the expected FRAME_MS, averaged so one
+    stray late packet doesn't spike the reading."""
+    deviation_ms = abs(gap_s * 1000 - FRAME_MS)
+    return prev_jitter_ms + (deviation_ms - prev_jitter_ms) * JITTER_SMOOTHING
 
 
 class AudioLink:
@@ -41,6 +50,10 @@ class AudioLink:
         self.output_level = 0.0  # last speaker frame's mean abs amplitude, for a UI meter
         self.mic_gain = mic_gain          # 1.0 = unity; adjustable live from the UI
         self.speaker_gain = speaker_gain
+
+        self.latency_ms = 0.0  # PortAudio-reported device buffering latency, set in start()
+        self.jitter_ms = 0.0   # smoothed deviation of received-packet spacing from FRAME_MS
+        self._last_recv_time = None
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
@@ -139,6 +152,10 @@ class AudioLink:
         if self.peer is None:
             self.peer = addr
             log.info("audio peer learned: %s", addr)
+        now = time.monotonic()
+        if self._last_recv_time is not None:
+            self.jitter_ms = _update_jitter(self.jitter_ms, now - self._last_recv_time)
+        self._last_recv_time = now
         samples = np.frombuffer(data, dtype=np.int16).reshape(-1, CHANNELS)
         samples = _apply_gain(samples, self.speaker_gain)
         self.output_level = float(np.abs(samples).mean()) if len(samples) else 0.0
@@ -170,6 +187,9 @@ class AudioLink:
             self._in_stream.start()
         if self._out_stream:
             self._out_stream.start()
+        self.latency_ms = round(
+            ((self._in_stream.latency if self._in_stream else 0) + (self._out_stream.latency if self._out_stream else 0)) * 1000, 1
+        )
         if self.peer:
             self._announce()
         log.info(
@@ -197,6 +217,11 @@ if __name__ == "__main__":
 
     clipped = _apply_gain(np.array([20000, -20000], dtype=np.int16), 2.0)
     assert list(clipped) == [32767, -32768]  # clamped, not wrapped around
+
+    j = _update_jitter(0.0, FRAME_MS / 1000)  # packet arrives exactly on time
+    assert j == 0.0
+    j = _update_jitter(j, (FRAME_MS + 20) / 1000)  # next one is 20ms late
+    assert 1.0 < j < 1.5  # 20ms deviation * 1/16 smoothing
 
     # Reproduces the reported bug: a client with no working mic never
     # sent anything, so the server-side peer was never learned and the

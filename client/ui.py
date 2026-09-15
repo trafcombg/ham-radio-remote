@@ -58,6 +58,9 @@ class MainWindow(QWidget):
         self.output_level_bar.setTextVisible(False)
         self.output_level_bar.setStyleSheet("QProgressBar::chunk { background-color: #3b82f6; }")
 
+        self.audio_stats_label = QLabel("")
+        self.audio_stats_label.setStyleSheet("color: gray; font-size: 11px;")
+
         audio_cfg = app_cfg["audio"]
         self.mic_gain_slider = QSlider(Qt.Horizontal)
         self.mic_gain_slider.setRange(0, 200)
@@ -109,6 +112,7 @@ class MainWindow(QWidget):
         layout.addWidget(QLabel("Говорител (изход)"))
         layout.addWidget(self.output_level_bar)
         layout.addWidget(self.speaker_gain_slider)
+        layout.addWidget(self.audio_stats_label)
         layout.addWidget(self.cw_key_button)
         cw_row = QHBoxLayout()
         cw_row.addWidget(self.cw_text_input)
@@ -343,6 +347,10 @@ class MainWindow(QWidget):
         if self.session.audio:
             self.level_bar.setValue(min(100, int(self.session.audio.input_level / 200 * 100)))
             self.output_level_bar.setValue(min(100, int(self.session.audio.output_level / 200 * 100)))
+            self.audio_stats_label.setText(
+                f"Латентност: {self.session.audio.latency_ms:.0f} ms · Jitter: {self.session.audio.jitter_ms:.1f} ms"
+            )
         else:
             self.level_bar.setValue(0)
             self.output_level_bar.setValue(0)
+            self.audio_stats_label.setText("")
