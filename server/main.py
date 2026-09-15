@@ -8,6 +8,7 @@ from pathlib import Path
 import uvicorn
 
 from server.admin_api import app as admin_app
+from server.amplifier_manager import AmplifierManager
 from server.db import build_db
 from server.radio_manager import RadioManager
 
@@ -26,10 +27,14 @@ async def main():
     manager = RadioManager(db)
     await manager.load_all()
 
+    amp_manager = AmplifierManager(db, manager)
+    await amp_manager.load_all()
+
     web_cfg = cfg.get("web", {})
     host, port = web_cfg.get("host", "0.0.0.0"), web_cfg.get("port", 8080)
     admin_app.state.db = db
     admin_app.state.manager = manager
+    admin_app.state.amp_manager = amp_manager
 
     log.info("admin панел на http://%s:%s/", host, port)
     uvicorn_config = uvicorn.Config(admin_app, host=host, port=port, log_level="info")

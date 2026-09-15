@@ -78,6 +78,47 @@
   </form>
 </dialog>
 
+<h1>Усилватели (ACOM)</h1>
+<button id="addAmpBtn">+ Добави усилвател</button>
+<table id="ampTable">
+  <thead><tr><th>Име</th><th>Модел</th><th>Транспорт</th><th>Статус</th><th>Мощност/SWR/Темп</th><th></th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<dialog id="ampDialog">
+  <h2 id="ampDialogTitle">Усилвател</h2>
+  <form id="ampForm">
+    <label>Име<input name="name" required></label>
+    <label>Модел
+      <select name="model">
+        <option>500S</option><option>600S</option><option>700S</option>
+        <option selected>1200S</option><option>2020S</option>
+      </select>
+    </label>
+    <label>Транспорт
+      <select name="transport">
+        <option value="tcp">TCP (суров, през eBox IP — недоказано, пробвай първо)</option>
+        <option value="serial">Сериен порт (директно, без eBox)</option>
+        <option value="http">HTTP (eBox уеб — виж server/ebox_transport.py, не е готово)</option>
+      </select>
+    </label>
+    <div class="row">
+      <div><label>Host/IP (за tcp/http)<input name="host"></label></div>
+      <div><label>Порт (за tcp/http)<input name="port" type="number"></label></div>
+    </div>
+    <label>Сериен порт (за serial транспорт)<input name="serial_port" placeholder="COM7"></label>
+    <div class="row">
+      <div><label>Потребител (ако eBox изисква)<input name="username"></label></div>
+      <div><label>Парола<input name="password" type="password"></label></div>
+    </div>
+    <label>Свързано радио (празно = споделен, без CAT mirror/PTT lockout)<input name="linked_radio" placeholder="напр. IC-7300"></label>
+    <div style="margin-top:1rem; display:flex; gap:.5rem;">
+      <button type="submit">Запази</button>
+      <button type="button" id="ampCancelBtn" class="secondary">Отказ</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 let radios = [];
 
@@ -251,11 +292,123 @@ document.getElementById("logoutBtn").onclick = async () => {
   location.href = "/login";
 };
 
+let amplifiers = [];
+const ampDialog = document.getElementById("ampDialog");
+const ampForm = document.getElementById("ampForm");
+let editingAmpName = null;
+
+async function loadAmplifiers() {
+  const res = await api("/api/amplifiers");
+  const body = await res.json();
+  amplifiers = body.amplifiers;
+  renderAmpTable();
+}
+
+function renderAmpTable() {
+  const tbody = document.querySelector("#ampTable tbody");
+  tbody.innerHTML = "";
+  for (const a of amplifiers) {
+    const t = a.telemetry;
+    const statusText = t ? t.status : "—";
+    const measurements = t ? `${t.output_power_w}W / SWR ${t.swr} / ${t.temp_c}°C` : "—";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${a.name}</td>
+      <td>${a.model}</td>
+      <td>${a.transport}</td>
+      <td class="${t && t.fault ? 'busy' : 'free'}">${statusText}</td>
+      <td>${measurements}</td>
+      <td></td>`;
+    const actionsTd = tr.lastElementChild;
+    for (const [label, mode] of [["Operate", "operate"], ["Standby", "standby"], ["Off", "off"]]) {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.className = "secondary";
+      btn.onclick = () => setAmpMode(a.name, mode);
+      actionsTd.appendChild(btn);
+    }
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Редактирай";
+    editBtn.className = "secondary";
+    editBtn.onclick = () => openAmpEdit(a);
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Изтрий";
+    delBtn.className = "danger";
+    delBtn.onclick = () => deleteAmplifier(a.name);
+    actionsTd.append(editBtn, delBtn);
+    tbody.appendChild(tr);
+  }
+}
+
+async function setAmpMode(name, mode) {
+  const res = await api(`/api/amplifiers/${encodeURIComponent(name)}/mode`, {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert("Грешка: " + (body.detail || res.status));
+  }
+}
+
+function openAmpEdit(a) {
+  editingAmpName = a ? a.name : null;
+  document.getElementById("ampDialogTitle").textContent = a ? "Редактирай " + a.name : "Нов усилвател";
+  ampForm.reset();
+  if (a) {
+    ampForm.name.value = a.name;
+    ampForm.model.value = a.model;
+    ampForm.transport.value = a.transport;
+    ampForm.host.value = a.host || "";
+    ampForm.port.value = a.port || "";
+    ampForm.serial_port.value = a.serial_port || "";
+    ampForm.username.value = a.username || "";
+    ampForm.linked_radio.value = a.linked_radio || "";
+  }
+  ampDialog.showModal();
+}
+
+document.getElementById("addAmpBtn").onclick = () => openAmpEdit(null);
+document.getElementById("ampCancelBtn").onclick = () => ampDialog.close();
+
+ampForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(ampForm);
+  const cfg = {
+    name: f.get("name"),
+    model: f.get("model"),
+    transport: f.get("transport"),
+    host: f.get("host") || null,
+    port: f.get("port") ? parseInt(f.get("port")) : null,
+    serial_port: f.get("serial_port") || null,
+    username: f.get("username") || null,
+    password: f.get("password") || null,
+    linked_radio: f.get("linked_radio") || null,
+  };
+  const isNew = !editingAmpName;
+  const url = isNew ? "/api/amplifiers" : `/api/amplifiers/${encodeURIComponent(editingAmpName)}`;
+  const res = await api(url, { method: isNew ? "POST" : "PUT", body: JSON.stringify(cfg) });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert("Грешка: " + JSON.stringify(body.detail || res.status));
+    return;
+  }
+  ampDialog.close();
+  loadAmplifiers();
+};
+
+async function deleteAmplifier(name) {
+  if (!confirm(`Изтриване на ${name}?`)) return;
+  await api(`/api/amplifiers/${encodeURIComponent(name)}`, { method: "DELETE" });
+  loadAmplifiers();
+}
+
 (async () => {
   const meRes = await fetch("/api/me");
   const me = await meRes.json();
   if (!me.user || !me.user.is_admin) { location.href = "/login"; return; }
   loadRadios();
+  loadAmplifiers();
 })();
 </script>
 </body>

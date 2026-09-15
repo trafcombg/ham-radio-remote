@@ -105,6 +105,18 @@ class NullDb:
     async def delete_radio_config(self, name):
         raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази радиа")
 
+    async def list_amplifier_configs(self):
+        return []
+
+    async def upsert_amplifier_config(self, cfg):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази усилватели")
+
+    async def delete_amplifier_config(self, name):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази усилватели")
+
+    async def log_amplifier_telemetry(self, name, telemetry):
+        pass
+
 
 class PostgresDb:
     def __init__(self, dsn: str):
@@ -229,6 +241,42 @@ class PostgresDb:
     async def delete_radio_config(self, name):
         async with self.pool.acquire() as c:
             await c.execute("DELETE FROM radio_configs WHERE name = $1", name)
+
+    async def list_amplifier_configs(self):
+        async with self.pool.acquire() as c:
+            rows = await c.fetch("SELECT * FROM amplifier_configs ORDER BY name")
+        return [dict(r) for r in rows]
+
+    async def upsert_amplifier_config(self, cfg: dict):
+        async with self.pool.acquire() as c:
+            await c.execute(
+                """
+                INSERT INTO amplifier_configs (
+                    name, model, transport, host, port, serial_port, username, password, linked_radio, updated_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
+                ON CONFLICT (name) DO UPDATE SET
+                    model = EXCLUDED.model, transport = EXCLUDED.transport, host = EXCLUDED.host,
+                    port = EXCLUDED.port, serial_port = EXCLUDED.serial_port, username = EXCLUDED.username,
+                    password = EXCLUDED.password, linked_radio = EXCLUDED.linked_radio, updated_at = now()
+                """,
+                cfg["name"], cfg.get("model", "1200S"), cfg["transport"], cfg.get("host"), cfg.get("port"),
+                cfg.get("serial_port"), cfg.get("username"), cfg.get("password"), cfg.get("linked_radio"),
+            )
+
+    async def delete_amplifier_config(self, name):
+        async with self.pool.acquire() as c:
+            await c.execute("DELETE FROM amplifier_configs WHERE name = $1", name)
+
+    async def log_amplifier_telemetry(self, name, telemetry: dict):
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "INSERT INTO amplifier_telemetry "
+                "(amplifier_name, status, output_power_w, reflected_power_w, swr, temp_c, fault) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7)",
+                name, telemetry.get("status"), telemetry.get("output_power_w"),
+                telemetry.get("reflected_power_w"), telemetry.get("swr"), telemetry.get("temp_c"),
+                telemetry.get("fault"),
+            )
 
 
 async def build_db(db_cfg):

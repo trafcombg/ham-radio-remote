@@ -58,3 +58,30 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     cw_serial_port TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Phase 5: ACOM amplifier config + logged telemetry.
+CREATE TABLE IF NOT EXISTS amplifier_configs (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    model TEXT NOT NULL DEFAULT '1200S',
+    transport TEXT NOT NULL DEFAULT 'tcp',  -- serial | tcp | http — see server/ebox_transport.py
+    host TEXT,
+    port INTEGER,
+    serial_port TEXT,
+    username TEXT,
+    password TEXT,
+    linked_radio TEXT,  -- null = shared/no CAT mirror or PTT safety lockout
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS amplifier_telemetry (
+    id SERIAL PRIMARY KEY,
+    amplifier_name TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status TEXT,
+    output_power_w REAL,
+    reflected_power_w REAL,
+    swr REAL,
+    temp_c REAL,
+    fault BOOLEAN
+);

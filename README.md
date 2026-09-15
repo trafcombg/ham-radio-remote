@@ -1,4 +1,4 @@
-# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3 + Фаза 4
+# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3 + Фаза 4 + Фаза 5
 
 Клиент-сървър дистанционно управление на Icom радиостанции: CAT bridge
 (виртуален COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
@@ -10,6 +10,44 @@ decode (потвърдено с два независими ctypes wrapper-а �
 decode винаги връща тишина). Засега аудиото е uncompressed PCM вместо
 Opus — за LAN честотната лента не е проблем (~768kbps mono/48kHz), а и
 latency-то е по-ниско без encode/decode. Виж `common/audio_io.py`.
+
+## Какво добавя Фаза 5 към Фаза 4
+
+ACOM 1200S/eBox усилвателна интеграция. **Изследователската задача от
+плана** (HTTP capture с Chrome DevTools на реален eBox) не мога да
+направя тук — нямам устройството. Вместо да позная байтове, изтеглих и
+прочетох реалния код на **bjornekelund/ACOM-Controller**
+(github.com/bjornekelund/ACOM-Controller) — активно поддържан
+open-source проект точно за тези усилватели, и същия протокол,
+кръстосано потвърден от втори независим проект (`pingpongshow/
+AcomControl`). Затова:
+
+- `common/acom_protocol.py` — **потвърден, не гадан** RS-232 протокол:
+  команди (standby/operate/off/telemetry вкл/изкл), 72-байтов telemetry
+  frame с checksum, всички полета (мощност/reflected/SWR/температура/
+  фен/band/грешка). Self-check с ръчно построен valid frame.
+- `server/ebox_transport.py` — три транспорта:
+  - `SerialAcomTransport` — директен RS-232 (същата връзка като
+    ACOM-Controller), ако усилвателят е закачен направо.
+  - `RawTcpAcomTransport` — **същия потвърден протокол** през суров TCP
+    към IP-то на eBox — разумно предположение (много такива Ethernet-
+    serial мостове просто препращат байтовете прозрачно), но
+    непотвърдено срещу реален eBox. Пробвай това първо.
+  - `HttpEboxTransport` — **изрично `NotImplementedError`** с точни
+    инструкции какво трябва да направиш (DevTools capture), а не
+    фалшива имплементация с измислени endpoint-и.
+- `server/amplifier_bridge.py` — свързва transport, декодира telemetry,
+  standby/operate/off, периодично логва в PostgreSQL. **Тестван
+  end-to-end през реален TCP socket** срещу фалшив "усилвател" в
+  self-check-а — не само чиста логика, а истински async I/O път.
+- CAT mirror: `RadioBridge.add_data_observer()` (нов hook) захранва
+  `AmplifierBridge.mirror_cat()` с копие на CAT потока на свързаното
+  радио.
+- Safety lockout: ако усилвателят докладва грешка/overtemp
+  (`error_code != 0xff`), PTT на свързаното радио се отказва с ясна
+  причина.
+- Admin панел: нова секция "Усилватели" — CRUD + Operate/Standby/Off
+  бутони на живо + текущи показания.
 
 ## Какво добавя Фаза 4 към Фаза 3
 
@@ -137,6 +175,18 @@ Admin панел: `http://<IP на сървъра>:8080/` от кой да е к
 според конфигурацията) реално се вика. За paddle/WinKeyer/RC-28 трябва
 реалният хардуер на потребителя — виж бележките по-горе.
 
+## Тест на усилвателя (без реален eBox)
+
+1. Задай в admin панела нов усилвател с `transport: tcp`, IP на eBox,
+   и (по избор) `linked_radio`.
+2. Ако eBox прозрачно препраща байтовете — статусът в панела трябва да
+   се напълни (мощност/SWR/температура) и Operate/Standby/Off бутоните
+   да работят реално.
+3. Ако не — `server/amplifier_bridge.py` ще логне грешка и продължи
+   (не чупи останалата част от сървъра), и трябва да минеш през
+   `HttpEboxTransport`-а: DevTools capture на реалния eBox, после
+   попълни `connect()`/`write()` там.
+
 ## Самопроверки (без хардуер/база)
 
 ```bash
@@ -144,8 +194,10 @@ python -m server.ptt_arbiter
 python -m server.device_registry
 python -m server.db
 python -m server.radio_bridge
+python -m server.amplifier_bridge
 python -m common.civ
 python -m common.morse
+python -m common.acom_protocol
 python -m client.cw.iambic
 python -m client.rc28
 ```

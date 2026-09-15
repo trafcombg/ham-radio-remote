@@ -80,6 +80,8 @@ class RadioBridge:
         self._extra_serials: dict = {}  # port name -> pyserial.Serial, for PTT/CW on a distinct port
         self._test_future = None
         self._cw_release_handle = None
+        self._data_observers: list = []  # extra callbacks fed every CAT byte — e.g. amplifier CAT mirror
+        self.amp_fault_check = None      # optional callable() -> bool, set by AmplifierManager when linked
 
     async def start(self):
         self.serial_proto = await open_serial(self.cfg["cat"]["serial_port"], self.cfg["cat"]["baud"])
@@ -134,6 +136,13 @@ class RadioBridge:
     def _on_serial_data(self, data: bytes):
         if self._test_future and not self._test_future.done():
             self._test_future.set_result(True)
+        for cb in self._data_observers:
+            cb(data)
+
+    def add_data_observer(self, callback):
+        """Called with every raw CAT byte chunk from the radio — e.g. an
+        AmplifierBridge mirroring this radio's CAT stream for band tracking."""
+        self._data_observers.append(callback)
 
     async def test_cat(self, timeout: float = 1.0) -> bool:
         """Active CAT probe on the port this bridge already has open —
@@ -218,6 +227,9 @@ class RadioBridge:
 
     async def _handle_ptt(self, writer, username, on):
         if on:
+            if self.amp_fault_check and self.amp_fault_check():
+                await self._send(writer, {"type": "ptt_denied", "reason": "усилвателят докладва грешка/overtemp"})
+                return
             try:
                 self.arbiter.acquire(username)
             except PttDenied as e:

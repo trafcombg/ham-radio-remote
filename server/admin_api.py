@@ -23,6 +23,7 @@ from server.device_registry import (
     scan_audio_devices,
     scan_serial_devices,
 )
+from server.amplifier_manager import AmplifierManager
 from server.radio_manager import RadioBusyError, RadioManager
 from server.web_auth import create_session_cookie, read_session_cookie
 
@@ -34,6 +35,10 @@ app = FastAPI(title="HAM Radio Remote — Admin")
 
 def get_manager(request: Request) -> RadioManager:
     return request.app.state.manager
+
+
+def get_amp_manager(request: Request) -> AmplifierManager:
+    return request.app.state.amp_manager
 
 
 def get_db(request: Request):
@@ -92,6 +97,22 @@ class RadioConfigRequest(BaseModel):
 
 class TestRequest(BaseModel):
     cat: RadioCatConfig
+
+
+class AmplifierConfigRequest(BaseModel):
+    name: str
+    model: str = "1200S"
+    transport: str  # serial | tcp | http — see server/ebox_transport.py
+    host: str | None = None
+    port: int | None = None
+    serial_port: str | None = None
+    username: str | None = None
+    password: str | None = None
+    linked_radio: str | None = None  # null = shared, no CAT mirror/PTT lockout
+
+
+class AmplifierModeRequest(BaseModel):
+    mode: str  # operate | standby | off
 
 
 def _to_cfg_dict(body: RadioConfigRequest) -> dict:
@@ -215,3 +236,54 @@ async def test_radio(name: str, body: TestRequest, request: Request, admin=Depen
         return {"ok": await probe_serial_port(port, cat.baud)}
     except (AmbiguousDeviceError, DeviceNotFoundError) as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/amplifiers")
+async def list_amplifiers(request: Request, admin=Depends(require_admin)):
+    db = get_db(request)
+    amp_manager = get_amp_manager(request)
+    configs = await db.list_amplifier_configs()
+    status = amp_manager.status()
+    for cfg in configs:
+        cfg["telemetry"] = status.get(cfg["name"])
+    return {"amplifiers": configs}
+
+
+@app.post("/api/amplifiers")
+async def create_amplifier(body: AmplifierConfigRequest, request: Request, admin=Depends(require_admin)):
+    amp_manager = get_amp_manager(request)
+    await amp_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.put("/api/amplifiers/{name}")
+async def update_amplifier(name: str, body: AmplifierConfigRequest, request: Request, admin=Depends(require_admin)):
+    if body.name != name:
+        raise HTTPException(status_code=400, detail="name mismatch")
+    amp_manager = get_amp_manager(request)
+    await amp_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.delete("/api/amplifiers/{name}")
+async def delete_amplifier(name: str, request: Request, admin=Depends(require_admin)):
+    amp_manager = get_amp_manager(request)
+    await amp_manager.remove(name)
+    return {"ok": True}
+
+
+@app.post("/api/amplifiers/{name}/mode")
+async def set_amplifier_mode(name: str, body: AmplifierModeRequest, request: Request, admin=Depends(require_admin)):
+    amp_manager = get_amp_manager(request)
+    bridge = amp_manager.bridges.get(name)
+    if not bridge:
+        raise HTTPException(status_code=404, detail="усилвателят не е свързан")
+    if body.mode == "operate":
+        bridge.operate()
+    elif body.mode == "standby":
+        bridge.standby()
+    elif body.mode == "off":
+        bridge.power_off()
+    else:
+        raise HTTPException(status_code=400, detail="mode трябва да е operate/standby/off")
+    return {"ok": True}
