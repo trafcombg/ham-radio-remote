@@ -43,8 +43,12 @@ class AmplifierBridge:
         self.transport.write(CMD_DISABLE_TELEMETRY)
         self.transport.close()
 
-    def _on_data(self, data: bytes):
-        for frame in self.parser.feed(data):
+    def _on_data(self, data):
+        """data is raw bytes from SerialAcomTransport/RawTcpAcomTransport
+        (parsed via self.parser) or an already-decoded telemetry dict
+        from HttpEboxTransport (which has no RS-232 byte stream to parse)."""
+        frames = [data] if isinstance(data, dict) else self.parser.feed(data)
+        for frame in frames:
             self.latest = frame
             self.fault = frame["fault"]
 

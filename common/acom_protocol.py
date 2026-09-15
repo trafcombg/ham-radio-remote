@@ -14,9 +14,10 @@ Every command below and the telemetry frame both use the same checksum
 convention: the bytes sum to 0 mod 256. That's asserted in the self-test.
 
 What this module does NOT cover: how ACOM's eBox (the Ethernet bridge)
-exposes this over HTTP — that protocol isn't publicly documented, and
-confirming it needs a live capture (Chrome DevTools -> Network tab) of a
-real eBox, which this environment doesn't have. See server/ebox_transport.py.
+exposes this over HTTP. That's now reverse-engineered and implemented
+in server/ebox_transport.py's HttpEboxTransport (confirmed live against
+a real eBox) — but its own telemetry decoding is still partial, see
+that class's docstring.
 """
 
 BAUD = 9600
