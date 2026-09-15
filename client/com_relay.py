@@ -9,11 +9,18 @@ through this tunnel — so send_cat()/on_cat_data write/observe it directly.
 """
 
 import asyncio
+import contextlib
 import logging
 
 import serial
 
 log = logging.getLogger("com_relay")
+
+# No app-level keepalive is possible on this channel — it's a raw CAT byte
+# passthrough (server forwards every byte straight to the real radio), so
+# injecting synthetic pings would corrupt the CI-V stream. This just has to
+# be generous enough not to fire during a legitimate quiet stretch.
+IDLE_TIMEOUT_S = 60.0
 
 
 class ComRelay:
@@ -32,7 +39,19 @@ class ComRelay:
         self.writer = writer
         log.info("connected to CAT bridge %s:%s <-> %s", self.server_host, self.server_port, self.com_port)
         try:
-            await asyncio.gather(self._pump_serial_to_tcp(), self._pump_tcp_to_serial(reader))
+            # gather() would wait for BOTH forever — _pump_serial_to_tcp
+            # never returns on its own, so a dead TCP side (the other
+            # coroutine finishing/raising) used to leave run() hung
+            # instead of letting the caller's reconnect loop take over.
+            tasks = [asyncio.create_task(self._pump_serial_to_tcp()), asyncio.create_task(self._pump_tcp_to_serial(reader))]
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            for task in done:
+                task.result()  # re-raise, e.g. a serial read error
         finally:
             self.writer = None
             writer.close()
@@ -53,7 +72,11 @@ class ComRelay:
 
     async def _pump_tcp_to_serial(self, reader):
         while True:
-            data = await reader.read(256)
+            try:
+                data = await asyncio.wait_for(reader.read(256), timeout=IDLE_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                log.warning("no CAT traffic for %.0fs — assuming the connection is dead", IDLE_TIMEOUT_S)
+                break
             if not data:
                 log.warning("CAT bridge connection closed")
                 break
@@ -66,3 +89,32 @@ class ComRelay:
         if self.writer:
             self.writer.write(data)
             await self.writer.drain()
+
+
+if __name__ == "__main__":
+    import unittest.mock as mock
+
+    async def _demo_idle_timeout():
+        # A CAT bridge connection that goes silent (no data, no close) must
+        # be treated as dead after IDLE_TIMEOUT_S, not hang forever — this
+        # is what let a client stay stuck on "Няма връзка" after a server
+        # restart if the TCP close wasn't clean.
+        global IDLE_TIMEOUT_S
+        IDLE_TIMEOUT_S = 0.05  # self-check only — production stays 60s
+
+        async def handle(reader, writer):
+            await asyncio.sleep(10)  # never sends anything, never closes
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            relay = ComRelay("COM_FAKE", 19200, "127.0.0.1", port)
+            relay.serial = mock.Mock()
+            start = asyncio.get_event_loop().time()
+            await relay._pump_tcp_to_serial(reader)  # must return once idle timeout fires
+            assert asyncio.get_event_loop().time() - start < 1.0
+            writer.close()
+
+    asyncio.run(_demo_idle_timeout())
+    print("com_relay.py: ok")

@@ -1,6 +1,7 @@
 pyserial-asyncio
 sounddevice
 numpy
+audioop-lts; python_version >= "3.13"
 asyncpg
 pycaw
 fastapi

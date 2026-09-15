@@ -120,6 +120,8 @@ class RadioBridge:
             mic_gain=audio_cfg.get("input_gain", 1.0),
             speaker_gain=audio_cfg.get("output_gain", 1.0),
             latency=audio_cfg.get("latency", "low"),
+            codec=audio_cfg.get("codec", "pcm16"),
+            sample_rate=audio_cfg.get("sample_rate", 48000),
         )
         self.audio.start()
 

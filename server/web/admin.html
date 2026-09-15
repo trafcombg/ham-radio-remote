@@ -104,6 +104,22 @@
         <output id="audio_output_gain_out">1.0</output>
       </label></div>
     </div>
+    <div class="row">
+      <div><label>Кодек
+        <select name="audio_codec">
+          <option value="pcm16">PCM (без компресия, най-добро качество)</option>
+          <option value="ulaw">µ-law (G.711, ~2x по-малка честотна лента)</option>
+        </select>
+      </label></div>
+      <div><label>Честота на дискретизация
+        <select name="audio_sample_rate">
+          <option value="48000">48000 Hz (максимално качество)</option>
+          <option value="24000">24000 Hz</option>
+          <option value="16000">16000 Hz (телефонно качество, най-малка лента)</option>
+          <option value="8000">8000 Hz (минимална лента)</option>
+        </select>
+      </label></div>
+    </div>
     <label>PTT метод
       <select name="ptt_method">
         <option value="civ">CAT команда (CI-V)</option>
@@ -357,6 +373,8 @@ async function openEdit(r) {
     form.audio_input_gain.value = r.audio.input_gain != null ? r.audio.input_gain : 1.0;
     form.audio_output_gain.value = r.audio.output_gain != null ? r.audio.output_gain : 1.0;
     syncGainOutputs();
+    form.audio_codec.value = r.audio.codec || "pcm16";
+    form.audio_sample_rate.value = r.audio.sample_rate || 48000;
     form.ptt_method.value = r.ptt.method;
     form.civ_address.value = r.ptt.civ_address || "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";
@@ -394,6 +412,8 @@ function formToCfg() {
       udp_port: parseInt(f.get("audio_udp_port")),
       input_gain: parseFloat(f.get("audio_input_gain")) || 1.0,
       output_gain: parseFloat(f.get("audio_output_gain")) || 1.0,
+      codec: f.get("audio_codec") || "pcm16",
+      sample_rate: parseInt(f.get("audio_sample_rate")) || 48000,
     },
     cw_udp_port: parseInt(f.get("cw_udp_port")),
     ptt: {

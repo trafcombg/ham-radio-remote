@@ -43,6 +43,8 @@ def _radio_cfg_to_row(cfg: dict) -> dict:
         "audio_udp_port": cfg["audio"]["udp_port"],
         "audio_input_gain": cfg["audio"].get("input_gain", 1.0),
         "audio_output_gain": cfg["audio"].get("output_gain", 1.0),
+        "audio_codec": cfg["audio"].get("codec", "pcm16"),
+        "audio_sample_rate": cfg["audio"].get("sample_rate", 48000),
         "ptt_method": cfg["ptt"]["method"],
         "ptt_civ_address": cfg["ptt"].get("civ_address"),
         "ptt_serial_port": cfg["ptt"].get("serial_port"),
@@ -72,6 +74,7 @@ def _row_to_radio_cfg(row) -> dict:
             "output_endpoint_id": row["audio_output_endpoint_id"],
             "udp_port": row["audio_udp_port"],
             "input_gain": row["audio_input_gain"], "output_gain": row["audio_output_gain"],
+            "codec": row["audio_codec"], "sample_rate": row["audio_sample_rate"],
         },
         "ptt": {
             "method": row["ptt_method"], "civ_address": row["ptt_civ_address"],
@@ -355,10 +358,10 @@ class PostgresDb:
                     cat_baud, cat_tcp_port, control_port,
                     audio_input_name_contains, audio_input_endpoint_id,
                     audio_output_name_contains, audio_output_endpoint_id,
-                    audio_udp_port, audio_input_gain, audio_output_gain,
+                    audio_udp_port, audio_input_gain, audio_output_gain, audio_codec, audio_sample_rate,
                     ptt_method, ptt_civ_address, ptt_serial_port,
                     cw_udp_port, cw_method, cw_civ_address, cw_serial_port, active, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25, now())
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27, now())
                 ON CONFLICT (name) DO UPDATE SET
                     model = EXCLUDED.model, cat_vid = EXCLUDED.cat_vid, cat_pid = EXCLUDED.cat_pid,
                     cat_serial_number = EXCLUDED.cat_serial_number, cat_location = EXCLUDED.cat_location,
@@ -370,6 +373,7 @@ class PostgresDb:
                     audio_output_endpoint_id = EXCLUDED.audio_output_endpoint_id,
                     audio_udp_port = EXCLUDED.audio_udp_port,
                     audio_input_gain = EXCLUDED.audio_input_gain, audio_output_gain = EXCLUDED.audio_output_gain,
+                    audio_codec = EXCLUDED.audio_codec, audio_sample_rate = EXCLUDED.audio_sample_rate,
                     ptt_method = EXCLUDED.ptt_method,
                     ptt_civ_address = EXCLUDED.ptt_civ_address, ptt_serial_port = EXCLUDED.ptt_serial_port,
                     cw_udp_port = EXCLUDED.cw_udp_port, cw_method = EXCLUDED.cw_method,
@@ -383,6 +387,7 @@ class PostgresDb:
                 r["audio_input_name_contains"], r["audio_input_endpoint_id"],
                 r["audio_output_name_contains"], r["audio_output_endpoint_id"],
                 r["audio_udp_port"], r["audio_input_gain"], r["audio_output_gain"],
+                r["audio_codec"], r["audio_sample_rate"],
                 r["ptt_method"], r["ptt_civ_address"], r["ptt_serial_port"],
                 r["cw_udp_port"], r["cw_method"], r["cw_civ_address"], r["cw_serial_port"],
                 r["active"],

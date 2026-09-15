@@ -11,6 +11,7 @@ import base64
 import binascii
 import logging
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -108,6 +109,8 @@ class RadioAudioConfig(BaseModel):
     udp_port: int
     input_gain: float = 1.0
     output_gain: float = 1.0
+    codec: Literal["pcm16", "ulaw"] = "pcm16"
+    sample_rate: Literal[48000, 24000, 16000, 8000] = 48000
 
 
 class RadioPttConfig(BaseModel):
@@ -311,6 +314,8 @@ async def list_client_radios(request: Request):
                 "control_port": c["control_port"],
                 "audio_port": c["audio"]["udp_port"],
                 "cw_port": c["cw_udp_port"],
+                "codec": c["audio"].get("codec", "pcm16"),
+                "sample_rate": c["audio"].get("sample_rate", 48000),
                 "civ_address": (c.get("ptt") or {}).get("civ_address"),
             }
             for c in configs

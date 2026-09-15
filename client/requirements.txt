@@ -4,3 +4,4 @@ pyserial-asyncio
 sounddevice
 numpy
 hidapi
+audioop-lts; python_version >= "3.13"

@@ -65,6 +65,25 @@ async def _run_control_client_forever(client: ControlClient):
         await asyncio.sleep(CONTROL_RECONNECT_DELAY_S)
 
 
+async def _run_cat_relay_forever(relay: ComRelay):
+    """Same gap as _run_control_client_forever, but for the per-radio CAT
+    TCP relay — a dropped server connection here (e.g. a server restart)
+    used to leave relay.run() dead with nothing retrying it, so the radio
+    stayed stuck on "Няма връзка" until the operator manually switched
+    away from and back to that radio."""
+    while True:
+        try:
+            await relay.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning(
+                "CAT връзка към %s:%s изгубена — нов опит след %.0fs",
+                relay.server_host, relay.server_port, CONTROL_RECONNECT_DELAY_S, exc_info=True,
+            )
+        await asyncio.sleep(CONTROL_RECONNECT_DELAY_S)
+
+
 class RadioSession:
     def __init__(self, app_cfg: dict, config_path=None):
         self.app_cfg = app_cfg
@@ -212,7 +231,7 @@ class RadioSession:
                 changed = True
             relay = ComRelay(mapping["internal"], self.app_cfg["com"].get("baud", 19200), self.server_host, radio["cat_port"])
             self.cat_relays[name] = relay
-            self._cat_tasks[name] = asyncio.create_task(relay.run())
+            self._cat_tasks[name] = asyncio.create_task(_run_cat_relay_forever(relay))
 
         if changed:
             self._save_config()
@@ -252,6 +271,8 @@ class RadioSession:
                 mic_gain=audio_cfg.get("mic_gain", 1.0),
                 speaker_gain=audio_cfg.get("speaker_gain", 1.0),
                 latency=audio_cfg.get("latency", "low"),
+                codec=radio_cfg.get("codec", "pcm16"),
+                sample_rate=radio_cfg.get("sample_rate", 48000),
             )
             self.audio.start()
         except Exception as e:

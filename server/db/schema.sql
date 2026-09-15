@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     audio_udp_port INTEGER NOT NULL,
     audio_input_gain REAL NOT NULL DEFAULT 1.0,
     audio_output_gain REAL NOT NULL DEFAULT 1.0,
+    audio_codec TEXT NOT NULL DEFAULT 'pcm16',
+    audio_sample_rate INTEGER NOT NULL DEFAULT 48000,
     ptt_method TEXT NOT NULL DEFAULT 'civ',
     ptt_civ_address INTEGER,
     ptt_serial_port TEXT,
@@ -116,6 +118,11 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
 -- a no-op on a fresh database (the CREATE TABLE above already has them).
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_gain REAL NOT NULL DEFAULT 1.0;
+
+-- Migration: per-radio audio codec/sample rate settings — a no-op on a
+-- fresh database (the CREATE TABLE above already has them).
+ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_codec TEXT NOT NULL DEFAULT 'pcm16';
+ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_sample_rate INTEGER NOT NULL DEFAULT 48000;
 
 -- Migration: "active" toggle so a radio can be configured but left unused
 -- (admin panel checkbox) without deleting it — a no-op on a fresh database.

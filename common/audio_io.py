@@ -1,13 +1,16 @@
 """Bidirectional mic/speaker <-> UDP link, shared by server and client.
 
-ponytail: raw PCM, not Opus — PyOgg's bundled opus.dll turned out to be
-broken on decode (confirmed with two independent ctypes bindings: both
-encode fine, decode always returns silence). LAN bandwidth easily covers
-uncompressed 48kHz mono int16 (~768kbps) and it's lower-latency besides.
-Swap in a verified Opus binding if bandwidth ever becomes a real
-constraint (e.g. remote/WAN use beyond the LAN this system targets).
+ponytail: no Opus — PyOgg's bundled opus.dll turned out to be broken on
+decode (confirmed with two independent ctypes bindings: both encode fine,
+decode always returns silence). The bandwidth/quality knob instead is
+codec="ulaw" (standard G.711 mu-law, ~2x smaller, via the audioop-lts
+package — stdlib audioop was removed in Python 3.13) plus a configurable
+sample_rate. Set per radio from the admin panel; the client reads
+whatever the server has configured via /api/client/radios and matches
+it — the two ends must agree, there's no in-band negotiation.
 """
 
+import audioop
 import logging
 import socket
 import threading
@@ -18,11 +21,9 @@ import sounddevice as sd
 
 log = logging.getLogger("audio_io")
 
-SAMPLE_RATE = 48000
+SAMPLE_RATE = 48000  # default when a radio doesn't specify one
 CHANNELS = 1
 FRAME_MS = 20
-FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 960
-FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2  # int16
 
 PEER_WAIT_LOG_INTERVAL_S = 3.0  # throttle — _on_mic/_on_speaker run every 20ms
 ANNOUNCE_INTERVAL_S = 3.0  # how often to re-poke a known peer — see start()
@@ -35,6 +36,18 @@ def _apply_gain(samples: np.ndarray, gain: float) -> np.ndarray:
     return np.clip(samples.astype(np.int32) * gain, -32768, 32767).astype(np.int16)
 
 
+def _encode(samples: np.ndarray, codec: str) -> bytes:
+    pcm_bytes = samples.tobytes()
+    if codec == "ulaw":
+        return audioop.lin2ulaw(pcm_bytes, 2)
+    return pcm_bytes
+
+
+def _decode(data: bytes, codec: str) -> np.ndarray:
+    pcm_bytes = audioop.ulaw2lin(data, 2) if codec == "ulaw" else data
+    return np.frombuffer(pcm_bytes, dtype=np.int16).reshape(-1, CHANNELS)
+
+
 def _update_jitter(prev_jitter_ms: float, gap_s: float) -> float:
     """RFC 3550-style smoothed jitter: how far the spacing between
     received packets deviates from the expected FRAME_MS, averaged so one
@@ -44,12 +57,20 @@ def _update_jitter(prev_jitter_ms: float, gap_s: float) -> float:
 
 
 class AudioLink:
-    def __init__(self, input_device, output_device, listen_port, peer=None, mic_gain=1.0, speaker_gain=1.0, latency="low"):
+    def __init__(
+        self, input_device, output_device, listen_port, peer=None, mic_gain=1.0, speaker_gain=1.0, latency="low",
+        codec="pcm16", sample_rate=SAMPLE_RATE,
+    ):
         self.peer = peer
         self.input_level = 0.0   # last mic frame's mean abs amplitude, for a UI meter
         self.output_level = 0.0  # last speaker frame's mean abs amplitude, for a UI meter
         self.mic_gain = mic_gain          # 1.0 = unity; adjustable live from the UI
         self.speaker_gain = speaker_gain
+
+        self.codec = codec  # "pcm16" (uncompressed) or "ulaw" (G.711, ~2x smaller)
+        self.sample_rate = sample_rate
+        self.frame_samples = sample_rate * FRAME_MS // 1000
+        self.frame_bytes = self.frame_samples * CHANNELS * 2  # int16 width, pre-codec
 
         self.latency_ms = 0.0  # PortAudio-reported device buffering latency, set in start()
         self.jitter_ms = 0.0   # smoothed deviation of received-packet spacing from FRAME_MS
@@ -83,15 +104,15 @@ class AudioLink:
         try:
             try:
                 self._in_stream = sd.InputStream(
-                    device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic, latency=latency,
+                    device=input_device, samplerate=self.sample_rate, channels=CHANNELS,
+                    dtype="int16", blocksize=self.frame_samples, callback=self._on_mic, latency=latency,
                 )
             except Exception:
                 log.warning("no microphone/input device available (device=%r) — mic capture disabled", input_device, exc_info=True)
             try:
                 self._out_stream = sd.OutputStream(
-                    device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker, latency=latency,
+                    device=output_device, samplerate=self.sample_rate, channels=CHANNELS,
+                    dtype="int16", blocksize=self.frame_samples, callback=self._on_speaker, latency=latency,
                 )
             except Exception:
                 log.warning("no speaker/output device available (device=%r) — playback disabled", output_device, exc_info=True)
@@ -121,7 +142,7 @@ class AudioLink:
             return
         try:
             out = _apply_gain(indata, self.mic_gain)
-            self.sock.sendto(out.tobytes(), self.peer)
+            self.sock.sendto(_encode(out, self.codec), self.peer)
         except OSError:
             log.exception("mic send failed")
 
@@ -131,7 +152,7 @@ class AudioLink:
         if status:
             log.warning("output status: %s", status)
         try:
-            data, addr = self.sock.recvfrom(FRAME_BYTES)
+            data, addr = self.sock.recvfrom(self.frame_bytes)
         except BlockingIOError:
             outdata.fill(0)
             self.output_level = 0.0
@@ -165,7 +186,7 @@ class AudioLink:
         if self._last_recv_time is not None:
             self.jitter_ms = _update_jitter(self.jitter_ms, now - self._last_recv_time)
         self._last_recv_time = now
-        samples = np.frombuffer(data, dtype=np.int16).reshape(-1, CHANNELS)
+        samples = _decode(data, self.codec)
         samples = _apply_gain(samples, self.speaker_gain)
         self.output_level = float(np.abs(samples).mean()) if len(samples) else 0.0
         n = min(len(samples), frames)
@@ -232,6 +253,14 @@ if __name__ == "__main__":
     j = _update_jitter(j, (FRAME_MS + 20) / 1000)  # next one is 20ms late
     assert 1.0 < j < 1.5  # 20ms deviation * 1/16 smoothing
 
+    pcm16 = np.array([1000, -1000, 32000, -32768, 0], dtype=np.int16)
+    assert _encode(pcm16, "pcm16") == pcm16.tobytes()  # passthrough, no codec
+    ulaw = _encode(pcm16, "ulaw")
+    assert len(ulaw) == len(pcm16)  # G.711: 1 byte/sample vs 2 for int16
+    decoded = _decode(ulaw, "ulaw")
+    assert np.abs(decoded.flatten().astype(np.int32) - pcm16.astype(np.int32)).max() < 1000  # lossy but close
+    assert _decode(b"", "ulaw").size == 0  # empty announce packet must not raise
+
     # Reproduces the reported bug: a client with no working mic never
     # sent anything, so the server-side peer was never learned and the
     # server could never send audio back either — even though the
@@ -255,5 +284,13 @@ if __name__ == "__main__":
     finally:
         link.stop()
         listener.close()
+
+    # A radio configured for a lower sample rate must size its frames
+    # (and thus its UDP packets) accordingly — this is the actual
+    # bandwidth lever, independent of the codec.
+    narrow = AudioLink(input_device=99999, output_device=None, listen_port=0, sample_rate=16000, codec="ulaw")
+    assert narrow.frame_samples == 320  # 16000 * 20ms
+    assert narrow.frame_bytes == 640    # pre-codec (int16) size — recv buffer must fit the uncompressed case
+    narrow.stop()
 
     print("audio_io.py: ok")
