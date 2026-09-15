@@ -259,6 +259,22 @@ async def list_devices(admin=Depends(require_admin)):
     }
 
 
+class DebugRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/debug")
+async def get_debug(admin=Depends(require_admin)):
+    return {"enabled": logging.getLogger().level <= logging.DEBUG}
+
+
+@app.post("/api/debug")
+async def set_debug(body: DebugRequest, admin=Depends(require_admin)):
+    logging.getLogger().setLevel(logging.DEBUG if body.enabled else logging.INFO)
+    log.info("debug logging %s", "enabled" if body.enabled else "disabled")
+    return {"enabled": body.enabled}
+
+
 @app.get("/api/radios/levels")
 async def radio_audio_levels(request: Request, admin=Depends(require_admin)):
     """Lightweight, polled frequently by the admin panel's level meters —

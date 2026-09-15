@@ -34,6 +34,7 @@
 </div>
 <button id="addBtn">+ Добави радио</button>
 <button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
+<button id="debugBtn" class="secondary">Debug режим: ...</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 <table id="radioTable">
   <thead><tr><th>Активно</th><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th>Аудио Вх/Изх</th><th></th></tr></thead>
@@ -664,6 +665,19 @@ async function deleteUser(username) {
   loadUsers();
 }
 
+async function refreshDebugBtn() {
+  const res = await api("/api/debug");
+  const body = await res.json();
+  document.getElementById("debugBtn").textContent = `Debug режим: ${body.enabled ? "вкл." : "изкл."}`;
+}
+
+document.getElementById("debugBtn").onclick = async () => {
+  const btn = document.getElementById("debugBtn");
+  const currentlyOn = btn.textContent.includes("вкл.");
+  await api("/api/debug", { method: "POST", body: JSON.stringify({ enabled: !currentlyOn }) });
+  refreshDebugBtn();
+};
+
 async function checkForUpdate() {
   const res = await api("/api/update");
   const body = await res.json();
@@ -706,6 +720,7 @@ document.getElementById("updateApplyBtn").onclick = async () => {
   loadAmplifiers();
   loadUsers();
   checkForUpdate();
+  refreshDebugBtn();
   setInterval(checkForUpdate, 5 * 60 * 1000);
   setInterval(pollLevels, 300);
 })();

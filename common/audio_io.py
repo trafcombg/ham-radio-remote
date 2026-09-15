@@ -10,6 +10,7 @@ constraint (e.g. remote/WAN use beyond the LAN this system targets).
 
 import logging
 import socket
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -21,6 +22,8 @@ CHANNELS = 1
 FRAME_MS = 20
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 960
 FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2  # int16
+
+PEER_WAIT_LOG_INTERVAL_S = 3.0  # throttle — _on_mic/_on_speaker run every 20ms
 
 
 def _apply_gain(samples: np.ndarray, gain: float) -> np.ndarray:
@@ -40,6 +43,9 @@ class AudioLink:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
         self.sock.bind(("0.0.0.0", listen_port))
+        self._listen_port = listen_port
+        self._last_send_wait_log = 0.0
+        self._last_recv_wait_log = 0.0
 
         self._in_stream = None
         try:
@@ -67,6 +73,10 @@ class AudioLink:
             log.warning("input status: %s", status)
         self.input_level = float(np.abs(indata).mean())
         if not self.peer:
+            now = time.monotonic()
+            if now - self._last_send_wait_log > PEER_WAIT_LOG_INTERVAL_S:
+                log.debug("no audio peer yet on UDP :%s — captured frame dropped (nothing received from the other side yet)", self._listen_port)
+                self._last_send_wait_log = now
             return
         try:
             out = _apply_gain(indata, self.mic_gain)
@@ -84,6 +94,10 @@ class AudioLink:
         except BlockingIOError:
             outdata.fill(0)
             self.output_level = 0.0
+            now = time.monotonic()
+            if now - self._last_recv_wait_log > PEER_WAIT_LOG_INTERVAL_S:
+                log.debug("nothing received yet on UDP :%s — playing silence", self._listen_port)
+                self._last_recv_wait_log = now
             return
         if self.peer is None:
             self.peer = addr

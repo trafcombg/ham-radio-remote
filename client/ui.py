@@ -71,6 +71,10 @@ class MainWindow(QWidget):
 
         self.settings_button = QPushButton("Настройки")
 
+        self.debug_button = QPushButton("Debug режим: изкл.")
+        self.debug_button.setCheckable(True)
+        self.debug_button.clicked.connect(self._toggle_debug)
+
         self.update_button = QPushButton("Обнови")
         self.update_button.setStyleSheet("background: #f59e0b;")
         self.update_button.hide()
@@ -99,6 +103,7 @@ class MainWindow(QWidget):
         cw_row.addWidget(self.cw_send_button)
         layout.addLayout(cw_row)
         layout.addWidget(self.settings_button)
+        layout.addWidget(self.debug_button)
         layout.addWidget(self.update_button)
         layout.addWidget(self.amp_section_label)
         layout.addWidget(self.amp_widget)
@@ -216,6 +221,11 @@ class MainWindow(QWidget):
         ok, detail = await self.session.set_amplifier_mode(name, mode)
         if not ok:
             log.warning("смяна на режим за %s се провали: %s", name, detail)
+
+    def _toggle_debug(self, checked: bool):
+        logging.getLogger().setLevel(logging.DEBUG if checked else logging.INFO)
+        self.debug_button.setText(f"Debug режим: {'вкл.' if checked else 'изкл.'}")
+        log.info("debug logging %s", "enabled" if checked else "disabled")
 
     def _apply_update(self):
         update = self.update_state.available
