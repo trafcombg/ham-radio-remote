@@ -35,6 +35,10 @@ class ComRelay:
             await asyncio.gather(self._pump_serial_to_tcp(), self._pump_tcp_to_serial(reader))
         finally:
             self.writer = None
+            writer.close()
+            if self.serial:
+                self.serial.close()
+                self.serial = None
 
     async def _pump_serial_to_tcp(self):
         loop = asyncio.get_running_loop()

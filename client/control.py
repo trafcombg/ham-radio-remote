@@ -36,6 +36,7 @@ class ControlClient:
                     self.last_notice = "Радиото беше преконфигурирано от администратор — връзката се затваря"
                     log.warning(self.last_notice)
         finally:
+            writer.close()
             self.writer = None
 
     async def request_ptt(self, on: bool):

@@ -1,26 +1,38 @@
 import asyncio
+import json
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QProgressBar,
+    QPushButton, QVBoxLayout, QWidget,
 )
+
+from client.settings_dialog import SettingsDialog
 
 
 class MainWindow(QWidget):
-    def __init__(self, relay, control, loop, audio, username, straight_key, text_cw):
+    def __init__(self, session, loop, app_cfg: dict, config_path: Path):
         super().__init__()
-        self.relay = relay
-        self.control = control
+        self.session = session
         self.loop = loop
-        self.audio = audio
-        self.username = username
-        self.straight_key = straight_key
-        self.text_cw = text_cw
+        self.app_cfg = app_cfg
+        self.config_path = config_path
 
-        self.setWindowTitle(f"HAM Radio Remote — {username}")
+        self.setWindowTitle(f"HAM Radio Remote — {app_cfg['username']}")
+
+        self.radio_list = QListWidget()
+        for radio_cfg in app_cfg["radios"]:
+            item = QListWidgetItem(radio_cfg["name"])
+            item.setData(1000, radio_cfg)
+            self.radio_list.addItem(item)
+        self.radio_list.itemClicked.connect(self._on_radio_clicked)
 
         self.status_label = QLabel("Свързване...")
+
         self.ptt_button = QPushButton("PTT (задръж)")
+        self.ptt_button.setStyleSheet("font-size: 20px; font-weight: bold; padding: 18px;")
+
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
         self.level_bar.setTextVisible(False)
@@ -30,7 +42,11 @@ class MainWindow(QWidget):
         self.cw_text_input.setPlaceholderText("текст за CW")
         self.cw_send_button = QPushButton("Изпрати CW")
 
+        self.settings_button = QPushButton("Настройки")
+
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Радиа"))
+        layout.addWidget(self.radio_list)
         layout.addWidget(self.status_label)
         layout.addWidget(self.ptt_button)
         layout.addWidget(self.level_bar)
@@ -39,40 +55,82 @@ class MainWindow(QWidget):
         cw_row.addWidget(self.cw_text_input)
         cw_row.addWidget(self.cw_send_button)
         layout.addLayout(cw_row)
+        layout.addWidget(self.settings_button)
 
         self.ptt_button.pressed.connect(lambda: self._send_ptt(True))
         self.ptt_button.released.connect(lambda: self._send_ptt(False))
-        self.cw_key_button.pressed.connect(self.straight_key.press)
-        self.cw_key_button.released.connect(self.straight_key.release)
+        self.cw_key_button.pressed.connect(lambda: self._cw_key_press(True))
+        self.cw_key_button.released.connect(lambda: self._cw_key_press(False))
         self.cw_send_button.clicked.connect(self._send_cw_text)
+        self.settings_button.clicked.connect(self._open_settings)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(200)
 
+        if app_cfg["radios"]:
+            self.radio_list.setCurrentRow(0)
+            self._switch_radio(app_cfg["radios"][0])
+
+    def _on_radio_clicked(self, item: QListWidgetItem):
+        self._switch_radio(item.data(1000))
+
+    def _switch_radio(self, radio_cfg: dict):
+        asyncio.run_coroutine_threadsafe(self.session.switch_to(radio_cfg), self.loop)
+        self.status_label.setText("Свързване...")
+
     def _send_ptt(self, on: bool):
-        asyncio.run_coroutine_threadsafe(self.control.request_ptt(on), self.loop)
+        if self.session.control:
+            asyncio.run_coroutine_threadsafe(self.session.control.request_ptt(on), self.loop)
+
+    def _cw_key_press(self, on: bool):
+        if self.session.straight_key:
+            self.session.straight_key.press() if on else self.session.straight_key.release()
 
     def _send_cw_text(self):
         text = self.cw_text_input.text().strip()
-        if text:
-            asyncio.run_coroutine_threadsafe(self.text_cw.send(text), self.loop)
+        if text and self.session.text_cw:
+            asyncio.run_coroutine_threadsafe(self.session.text_cw.send(text), self.loop)
+
+    def _open_settings(self):
+        dialog = SettingsDialog(self.app_cfg["cw"], self.app_cfg["rc28"], self)
+        if dialog.exec():
+            self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
+            self.app_cfg["rc28"] = dialog.result_rc28_cfg(self.app_cfg["rc28"])
+            self.config_path.write_text(json.dumps(self.app_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+            current = self.radio_list.currentItem()
+            if current:
+                self._switch_radio(current.data(1000))
 
     def _tick(self):
-        if self.control.last_notice:
-            self.status_label.setText(self.control.last_notice)
-            self.control.last_notice = None
-            self.level_bar.setValue(min(100, int(self.audio.level / 200 * 100)))
+        for i in range(self.radio_list.count()):
+            item = self.radio_list.item(i)
+            radio_cfg = item.data(1000)
+            busy_by = self.session.radio_status(radio_cfg["name"])
+            label = radio_cfg["name"] + (f" — заето от {busy_by}" if busy_by else " — свободно")
+            if item.text() != label:
+                item.setText(label)
+
+        if not self.session.control:
+            self.level_bar.setValue(0)
             return
 
-        connected = self.relay.writer is not None
-        busy_by = self.control.busy_by
+        if self.session.control.last_notice:
+            self.status_label.setText(self.session.control.last_notice)
+            self.session.control.last_notice = None
+            return
+
+        connected = self.session.relay is not None and self.session.relay.writer is not None
+        busy_by = self.session.control.busy_by
+        username = self.app_cfg["username"]
         if not connected:
             self.status_label.setText("Няма връзка")
-        elif busy_by and busy_by != self.username:
+        elif busy_by and busy_by != username:
             self.status_label.setText(f"Заето от {busy_by}")
-        elif busy_by == self.username:
+        elif busy_by == username:
             self.status_label.setText("Предава")
         else:
             self.status_label.setText("Свързан")
-        self.level_bar.setValue(min(100, int(self.audio.level / 200 * 100)))
+
+        if self.session.audio:
+            self.level_bar.setValue(min(100, int(self.session.audio.level / 200 * 100)))

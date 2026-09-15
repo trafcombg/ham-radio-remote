@@ -1,26 +1,45 @@
 {
   "username": "georgi",
+  "server_host": "127.0.0.1",
   "com": {
     "local_port": "COM21",
-    "baud": 9600,
-    "server_host": "127.0.0.1",
-    "server_port": 4533
-  },
-  "control": {
-    "server_host": "127.0.0.1",
-    "server_port": 4633
+    "baud": 19200
   },
   "audio": {
     "input_device": null,
     "output_device": null,
-    "server_host": "127.0.0.1",
-    "server_port": 5006,
     "local_port": 5007
   },
   "cw": {
-    "server_host": "127.0.0.1",
-    "server_port": 5106,
     "local_port": 5107,
-    "wpm": 20
-  }
+    "wpm": 20,
+    "source": "straight",
+    "paddle_port": null,
+    "paddle_dit_pin": "cts",
+    "paddle_dah_pin": "dsr",
+    "winkeyer_port": null,
+    "winkeyer_baud": 1200
+  },
+  "rc28": {
+    "enabled": false,
+    "step_hz": 10
+  },
+  "radios": [
+    {
+      "name": "IC-7300",
+      "cat_port": 4532,
+      "control_port": 4632,
+      "audio_port": 5004,
+      "cw_port": 5104,
+      "civ_address": 148
+    },
+    {
+      "name": "IC-746PRO",
+      "cat_port": 4533,
+      "control_port": 4633,
+      "audio_port": 5006,
+      "cw_port": 5106,
+      "civ_address": null
+    }
+  ]
 }

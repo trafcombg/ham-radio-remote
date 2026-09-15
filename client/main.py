@@ -9,76 +9,49 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from client.com_relay import ComRelay
-from client.control import ControlClient
-from client.cw.straight_key import StraightKeySource
-from client.cw.text_source import TextCwSource
-from client.rc28 import Rc28Driver
+from client.session import RadioSession
 from client.ui import MainWindow
-from common.audio_io import AudioLink
-from common.cw_link import CwLink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("client")
 
 
-def load_config():
+def config_path() -> Path:
     name = sys.argv[1] if len(sys.argv) > 1 else "config.json"
-    return json.loads(Path(__file__).with_name(name).read_text(encoding="utf-8"))
+    return Path(__file__).with_name(name)
 
 
-def start_asyncio_thread(coro_factories):
+def load_config(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def start_asyncio_thread():
     loop = asyncio.new_event_loop()
 
     def runner():
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(asyncio.gather(*(f() for f in coro_factories)))
+        loop.run_forever()
 
     threading.Thread(target=runner, daemon=True).start()
     return loop
 
 
 def main():
-    cfg = load_config()
+    path = config_path()
+    cfg = load_config(path)
 
-    relay = ComRelay(
-        cfg["com"]["local_port"], cfg["com"]["baud"],
-        cfg["com"]["server_host"], cfg["com"]["server_port"],
-    )
-    control = ControlClient(cfg["username"], cfg["control"]["server_host"], cfg["control"]["server_port"])
-    coro_factories = [relay.run, control.run]
-
-    rc28_cfg = cfg.get("rc28", {})
-    if rc28_cfg.get("enabled"):
-        rc28 = Rc28Driver(relay.send_cat, rc28_cfg["civ_address"], rc28_cfg.get("step_hz", 10))
-        relay.on_cat_data = rc28.on_cat_reply
-        coro_factories.append(rc28.run)
-
-    loop = start_asyncio_thread(coro_factories)
-
-    audio = AudioLink(
-        input_device=cfg["audio"]["input_device"],
-        output_device=cfg["audio"]["output_device"],
-        listen_port=cfg["audio"]["local_port"],
-        peer=(cfg["audio"]["server_host"], cfg["audio"]["server_port"]),
-    )
-    audio.start()
-
-    cw_cfg = cfg["cw"]
-    cw_link = CwLink(
-        cw_cfg["local_port"],
-        peer=(cw_cfg["server_host"], cw_cfg["server_port"]),
-        username=cfg["username"],
-    )
-    straight_key = StraightKeySource(cw_link.send_key)
-    text_cw = TextCwSource(cw_cfg["wpm"], cw_link.send_key)
+    loop = start_asyncio_thread()
+    session = RadioSession(cfg)
+    asyncio.run_coroutine_threadsafe(session.start_status_watchers(), loop)
 
     app = QApplication(sys.argv)
-    window = MainWindow(relay, control, loop, audio, cfg["username"], straight_key, text_cw)
+    window = MainWindow(session, loop, cfg, path)
     window.show()
     exit_code = app.exec()
-    audio.stop()
-    cw_link.close()
+
+    future = asyncio.run_coroutine_threadsafe(session.shutdown(), loop)
+    future.result(timeout=5)
+    loop.call_soon_threadsafe(loop.stop)
     sys.exit(exit_code)
 
 
