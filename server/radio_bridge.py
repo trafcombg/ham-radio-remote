@@ -21,6 +21,7 @@ without restarting the server.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -28,6 +29,8 @@ import serial
 
 from common.audio_io import AudioLink
 from common.civ import ptt_command
+from common.control_protocol import KEEPALIVE_INTERVAL_S as CONTROL_KEEPALIVE_INTERVAL_S
+from common.control_protocol import READ_TIMEOUT_S as CONTROL_READ_TIMEOUT_S
 from common.cw_link import CwLink
 from server.cat_bridge import CIV_GET_FREQUENCY, make_cat_server, open_serial
 from server.db import PostgresDb
@@ -96,6 +99,7 @@ class RadioBridge:
         self.cw_link = None
         self._cat_server = None
         self._control_server = None
+        self._keepalive_task = None
         self._extra_serials: dict = {}  # port name -> pyserial.Serial, for PTT/CW on a distinct port
         self._test_future = None
         self._cw_release_handle = None
@@ -124,6 +128,7 @@ class RadioBridge:
         host = self.cfg["cat"].get("tcp_host", "0.0.0.0")
         self._cat_server = await make_cat_server(self.serial_proto, host, self.cfg["cat"]["tcp_port"])
         self._control_server = await asyncio.start_server(self._handle_control_client, host, self.cfg["control_port"])
+        self._keepalive_task = asyncio.create_task(self._control_keepalive_loop())
         log.info(
             "radio %s up: CAT :%s control :%s audio UDP :%s CW UDP :%s",
             self.name, self.cfg["cat"]["tcp_port"], self.cfg["control_port"],
@@ -136,6 +141,8 @@ class RadioBridge:
 
     async def shutdown(self):
         await self._broadcast({"type": "reconfigured"})
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
         if self._control_server:
             self._control_server.close()
         if self._cat_server:
@@ -227,7 +234,20 @@ class RadioBridge:
         username = None
         try:
             while True:
-                line = await reader.readline()
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=CONTROL_READ_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    # No hello/ptt/ping from this client in CONTROL_READ_TIMEOUT_S
+                    # — a silent network drop (no FIN/RST) never trips the
+                    # normal "if not line: break" path, so a held PTT would
+                    # otherwise stay keyed forever. The keepalive ping gives
+                    # a healthy client something to send well before this
+                    # fires; a real client always replies via the ping
+                    # itself keeping traffic flowing, so this only catches
+                    # connections that are actually gone.
+                    if username:
+                        log.warning("control client %s went silent for %.0fs — treating as disconnected", username, CONTROL_READ_TIMEOUT_S)
+                    break
                 if not line:
                     break
                 msg = json.loads(line)
@@ -243,6 +263,8 @@ class RadioBridge:
                     await self._broadcast_status()
                 elif msg["type"] == "ptt" and username:
                     await self._handle_ptt(writer, username, msg["on"])
+                elif msg["type"] == "ping":
+                    pass  # just proof of life — see CONTROL_READ_TIMEOUT_S above
         except (ConnectionResetError, json.JSONDecodeError):
             pass
         finally:
@@ -311,10 +333,33 @@ class RadioBridge:
             try:
                 await self._send(w, obj)
             except (ConnectionError, OSError):
-                pass
+                # A send failing IS proof this connection is dead — clean
+                # it up right here instead of swallowing it. Previously
+                # this just `pass`ed: a client that vanished without a
+                # clean TCP close (silent network drop, no FIN/RST) kept
+                # its writer in control_clients forever, and if it was
+                # PTT holder at the time, the radio stayed keyed forever
+                # too — nothing was ever going to call
+                # _release_if_holder for a connection nobody noticed died.
+                username = self.control_clients.pop(w, None)
+                if username:
+                    log.warning("control client %s send failed — treating connection as dead", username)
+                    await self._release_if_holder(w, username)
+                with contextlib.suppress(Exception):
+                    w.close()
 
     async def _broadcast_status(self):
         await self._broadcast({"type": "status", "busy_by": self.arbiter.holder})
+
+    async def _control_keepalive_loop(self):
+        """Belt-and-braces alongside the read timeout in
+        _handle_control_client: proves to every connected client that
+        we're still here (and, via _broadcast's cleanup above, notices
+        when one of them silently isn't anymore) even during a stretch
+        with no PTT/status activity to naturally carry traffic."""
+        while True:
+            await asyncio.sleep(CONTROL_KEEPALIVE_INTERVAL_S)
+            await self._broadcast({"type": "ping"})
 
 
 if __name__ == "__main__":
@@ -445,8 +490,80 @@ if __name__ == "__main__":
         assert bridge.arbiter.holder is None, "arbiter never released on PTT-up"
         assert bridge.ptt_method.calls == [True, False], "radio never un-keyed on PTT-up"
 
+    async def _demo_broadcast_cleans_up_dead_writer():
+        # The other half of the same class of bug: _broadcast() (used by
+        # every status update, including the keepalive ping) used to just
+        # swallow a failed send and move on — a writer that's actually
+        # dead stayed registered (and, if it was PTT holder, stayed
+        # "holding" it) forever, since nothing else would ever notice.
+        class _RaisingWriter:
+            def write(self, data):
+                raise ConnectionResetError("gone")
+
+            def close(self):
+                pass
+
+        bridge = RadioBridge({"name": "TEST"}, NullDb())
+        bridge.ptt_method = _FakeKey()
+        dead_writer = _RaisingWriter()
+        bridge.control_clients[dead_writer] = "ivan"
+        bridge.arbiter.acquire("ivan")
+        bridge.ptt_method.set(True)
+
+        await bridge._broadcast({"type": "status", "busy_by": "ivan"})
+
+        assert dead_writer not in bridge.control_clients, "dead writer never removed from control_clients"
+        assert bridge.arbiter.holder is None, "PTT never released for a writer that failed to send"
+        assert bridge.ptt_method.calls == [True, False], "radio never un-keyed when the dead writer was found"
+
+    async def _demo_silent_disconnect():
+        # Reproduces the report: hold PTT, connection dies WITHOUT a clean
+        # TCP close (real-world: WiFi/NAT silently drops it) — nothing
+        # ever sends "off" and nobody ever sees EOF. Must still un-key
+        # once the read timeout notices, not stay keyed forever.
+        global CONTROL_READ_TIMEOUT_S
+        original_timeout = CONTROL_READ_TIMEOUT_S
+        CONTROL_READ_TIMEOUT_S = 1.0  # short but not so tight the hello/ptt round-trips themselves risk tripping it
+        try:
+            bridge = RadioBridge({"name": "TEST"}, NullDb())
+            bridge.ptt_method = _FakeKey()
+            server = await asyncio.start_server(bridge._handle_control_client, "127.0.0.1", 0)
+            port = server.sockets[0].getsockname()[1]
+            async def _read_until(reader, msg_type):
+                # hello/ptt each trigger a _broadcast_status() alongside
+                # their own ack — read past that interleaved "status"
+                # line rather than assuming a fixed 1-reply-per-request
+                # ordering.
+                while True:
+                    line = json.loads(await reader.readline())
+                    if line["type"] == msg_type:
+                        return line
+
+            async with server:
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.write((json.dumps({"type": "hello", "username": "ivan", "password": ""}) + "\n").encode())
+                await writer.drain()
+                await _read_until(reader, "hello_ack")
+                writer.write((json.dumps({"type": "ptt", "on": True}) + "\n").encode())
+                await writer.drain()
+                await _read_until(reader, "ptt_ack")
+                assert bridge.arbiter.holder == "ivan"
+                assert bridge.ptt_method.calls == [True]
+
+                # Go silent WITHOUT closing — the socket stays technically
+                # open, just nobody sends or reads anything, same as a
+                # network path that drops packets without a proper FIN/RST.
+                await asyncio.sleep(CONTROL_READ_TIMEOUT_S + 0.3)
+                assert bridge.arbiter.holder is None, "PTT never released after the connection went silent"
+                assert bridge.ptt_method.calls == [True, False], "radio never un-keyed after a silent disconnect"
+                writer.close()
+        finally:
+            CONTROL_READ_TIMEOUT_S = original_timeout
+
     _demo_lazy_keys()
     asyncio.run(_demo())
     asyncio.run(_demo_ptt_release())
+    asyncio.run(_demo_broadcast_cleans_up_dead_writer())
+    asyncio.run(_demo_silent_disconnect())
     asyncio.run(_demo_authorize())
     print("radio_bridge.py: ok")

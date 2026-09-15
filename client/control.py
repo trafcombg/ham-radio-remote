@@ -6,6 +6,8 @@ import asyncio
 import json
 import logging
 
+from common.control_protocol import KEEPALIVE_INTERVAL_S, READ_TIMEOUT_S
+
 log = logging.getLogger("control")
 
 
@@ -24,9 +26,20 @@ class ControlClient:
         reader, writer = await asyncio.open_connection(self.server_host, self.server_port)
         self.writer = writer
         await self._send({"type": "hello", "username": self.username, "password": self.password})
+        ping_task = asyncio.create_task(self._ping_loop())
         try:
             while True:
-                line = await reader.readline()
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=READ_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    # Server went silent (should be sending its own
+                    # keepalive pings) — a silent network drop, not a
+                    # clean close, never trips "if not line: break" on
+                    # its own. Treat it as dead so the reconnect loop in
+                    # session.py takes over instead of hanging here
+                    # forever — this is exactly what left PTT stuck.
+                    log.warning("control server %s:%s went silent — reconnecting", self.server_host, self.server_port)
+                    break
                 if not line:
                     break
                 msg = json.loads(line)
@@ -42,9 +55,21 @@ class ControlClient:
                 elif msg["type"] == "reconfigured":
                     self.last_notice = "Радиото беше преконфигурирано от администратор — връзката се затваря"
                     log.warning(self.last_notice)
+                elif msg["type"] == "ping":
+                    pass  # server's keepalive — just proof of life
         finally:
+            ping_task.cancel()
             writer.close()
             self.writer = None
+
+    async def _ping_loop(self):
+        """Gives the server's own read timeout something to see from us
+        during a quiet stretch (no PTT activity) — otherwise a healthy
+        but idle client would eventually look indistinguishable from a
+        dead one from the server's side."""
+        while True:
+            await asyncio.sleep(KEEPALIVE_INTERVAL_S)
+            await self._send({"type": "ping"})
 
     async def request_ptt(self, on: bool):
         await self._send({"type": "ptt", "on": on})
