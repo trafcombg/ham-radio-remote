@@ -271,6 +271,14 @@ async def get_debug(admin=Depends(require_admin)):
 @app.post("/api/debug")
 async def set_debug(body: DebugRequest, admin=Depends(require_admin)):
     logging.getLogger().setLevel(logging.DEBUG if body.enabled else logging.INFO)
+    # comtypes (pycaw's COM refcounting, from audio device enumeration)
+    # is extremely chatty at DEBUG and drowns out everything actually
+    # useful — keep it quiet regardless of our own debug toggle.
+    logging.getLogger("comtypes").setLevel(logging.WARNING)
+    # The admin panel's frequent polling (levels, update check, etc.)
+    # would otherwise flood the console with "GET ... 200 OK" — only show
+    # it while debug mode is on.
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO if body.enabled else logging.WARNING)
     log.info("debug logging %s", "enabled" if body.enabled else "disabled")
     return {"enabled": body.enabled}
 

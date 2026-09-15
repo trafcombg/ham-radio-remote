@@ -224,6 +224,9 @@ class MainWindow(QWidget):
 
     def _toggle_debug(self, checked: bool):
         logging.getLogger().setLevel(logging.DEBUG if checked else logging.INFO)
+        # comtypes (pycaw's COM refcounting) is extremely chatty at DEBUG
+        # and drowns out everything actually useful — keep it quiet.
+        logging.getLogger("comtypes").setLevel(logging.WARNING)
         self.debug_button.setText(f"Debug режим: {'вкл.' if checked else 'изкл.'}")
         log.info("debug logging %s", "enabled" if checked else "disabled")
 

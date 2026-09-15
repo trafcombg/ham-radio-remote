@@ -15,6 +15,7 @@ from client.login_dialog import LoginDialog
 from client.session import RadioSession
 from client.ui import MainWindow
 from common.app_paths import app_dir
+from common.firewall import ensure_ports_open
 from common.updater import check_for_update
 from common.version import APP_VERSION
 
@@ -98,6 +99,9 @@ def main():
         log.warning("не успях да взема списъка с радиа от сървъра при старт", exc_info=True)
     asyncio.run_coroutine_threadsafe(session.start_amplifier_poll(), loop)
     asyncio.run_coroutine_threadsafe(_update_check_loop(update_state), loop)
+
+    ports = [(cfg["audio"]["local_port"], "udp"), (cfg["cw"]["local_port"], "udp")]
+    asyncio.run_coroutine_threadsafe(asyncio.to_thread(ensure_ports_open, ports, "HAM Radio Remote Client"), loop)
 
     window = MainWindow(session, loop, cfg, path, update_state)
     window.show()

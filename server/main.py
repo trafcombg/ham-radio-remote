@@ -11,8 +11,10 @@ import urllib.request
 from pathlib import Path
 
 import uvicorn
+from uvicorn.config import LOGGING_CONFIG
 
 from common.app_paths import app_dir
+from common.firewall import ensure_ports_open
 from common.updater import check_for_update
 from common.version import APP_VERSION
 from server.admin_api import app as admin_app
@@ -23,6 +25,17 @@ from server.radio_manager import RadioManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
+
+# Quiet by default — the admin panel's frequent polling (levels, update
+# check, users/radios lists) would otherwise flood the console with a
+# "GET ... 200 OK" line per request. uvicorn.Server.serve() applies its
+# own logging config (dictConfig) at startup, which would silently
+# override a plain setLevel() call made before it — so the WARNING
+# default has to live in the log_config passed to uvicorn.Config itself.
+# The Debug режим toggle (admin_api.set_debug) flips it back to INFO at
+# runtime, which sticks since dictConfig only runs once at startup.
+ACCESS_LOG_CONFIG = {**LOGGING_CONFIG, "loggers": {**LOGGING_CONFIG["loggers"]}}
+ACCESS_LOG_CONFIG["loggers"]["uvicorn.access"] = {**LOGGING_CONFIG["loggers"]["uvicorn.access"], "level": "WARNING"}
 
 UPDATE_CHECK_INTERVAL_S = 24 * 3600
 
@@ -99,8 +112,22 @@ async def main():
     admin_app.state.manager = manager
     admin_app.state.amp_manager = amp_manager
 
+    ports = [(port, "tcp")]
+    for radio_cfg in await manager.list_configs():
+        if not radio_cfg.get("active", True):
+            continue
+        ports.append((radio_cfg["cat"]["tcp_port"], "tcp"))
+        ports.append((radio_cfg["control_port"], "tcp"))
+        ports.append((radio_cfg["audio"]["udp_port"], "udp"))
+        ports.append((radio_cfg["cw_udp_port"], "udp"))
+    asyncio.create_task(asyncio.to_thread(ensure_ports_open, ports, "HAM Radio Remote Server"))
+
     log.info("admin панел на http://%s:%s/", host, port)
-    uvicorn_config = uvicorn.Config(admin_app, host=host, port=port, log_level="info")
+    # No log_level= here: uvicorn.Config.configure_logging() applies it
+    # AFTER log_config, via setLevel("uvicorn.access", log_level) —
+    # unconditionally overwriting our WARNING default back to INFO.
+    # log_config alone already sets uvicorn/uvicorn.error to INFO.
+    uvicorn_config = uvicorn.Config(admin_app, host=host, port=port, log_config=ACCESS_LOG_CONFIG)
     await uvicorn.Server(uvicorn_config).serve()
 
 
