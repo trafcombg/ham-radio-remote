@@ -5,3 +5,4 @@ sounddevice
 numpy
 hidapi
 audioop-lts; python_version >= "3.13"
+av==18.1.0

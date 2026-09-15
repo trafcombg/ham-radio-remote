@@ -86,7 +86,7 @@ class SettingsDialog(QDialog):
             for radio_cfg in active_radios:
                 name = radio_cfg["name"]
                 com_port = com_ports.get(name, {}).get("local", "— (ще се създаде при връзка)")
-                civ = f" | CIV {radio_cfg['civ_address']}" if radio_cfg.get("civ_address") else ""
+                civ = f" | CIV {radio_cfg['civ_address']:02X}" if radio_cfg.get("civ_address") else ""
                 details = (
                     f"COM {com_port} · CAT TCP :{radio_cfg.get('cat_port')} · Control :{radio_cfg.get('control_port')} · "
                     f"Audio UDP :{radio_cfg.get('audio_port')} · CW UDP :{radio_cfg.get('cw_port')}{civ}"

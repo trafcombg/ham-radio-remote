@@ -109,6 +109,7 @@
         <select name="audio_codec">
           <option value="pcm16">PCM (без компресия, най-добро качество)</option>
           <option value="ulaw">µ-law (G.711, ~2x по-малка честотна лента)</option>
+          <option value="opus">Opus (най-добра защита срещу накъсване/загубени пакети)</option>
         </select>
       </label></div>
       <div><label>Честота на дискретизация
@@ -127,7 +128,7 @@
         <option value="dtr">DTR линия</option>
       </select>
     </label>
-    <label>CI-V адрес (десетично, напр. 148 за 0x94)<input name="civ_address" type="number"></label>
+    <label>CI-V адрес (шестнайсетично, напр. 94 за IC-7300)<input name="civ_address" placeholder="напр. 94"></label>
     <label>PTT сериен порт override (празно = същия като CAT)<input name="ptt_serial_port"></label>
     <label>CW UDP порт<input name="cw_udp_port" type="number" required></label>
     <label>CW метод (празно = същия като PTT — обичайно за CW-способни радиа)
@@ -376,7 +377,7 @@ async function openEdit(r) {
     form.audio_codec.value = r.audio.codec || "pcm16";
     form.audio_sample_rate.value = r.audio.sample_rate || 48000;
     form.ptt_method.value = r.ptt.method;
-    form.civ_address.value = r.ptt.civ_address || "";
+    form.civ_address.value = r.ptt.civ_address != null ? r.ptt.civ_address.toString(16) : "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";
     form.cw_udp_port.value = r.cw_udp_port;
     form.cw_method.value = r.cw ? r.cw.method : "";
@@ -418,12 +419,12 @@ function formToCfg() {
     cw_udp_port: parseInt(f.get("cw_udp_port")),
     ptt: {
       method: f.get("ptt_method"),
-      civ_address: f.get("civ_address") ? parseInt(f.get("civ_address")) : null,
+      civ_address: f.get("civ_address") ? parseInt(f.get("civ_address"), 16) : null,
       serial_port: f.get("ptt_serial_port") || null,
     },
     cw: f.get("cw_method") ? {
       method: f.get("cw_method"),
-      civ_address: f.get("civ_address") ? parseInt(f.get("civ_address")) : null,
+      civ_address: f.get("civ_address") ? parseInt(f.get("civ_address"), 16) : null,
       serial_port: f.get("cw_serial_port") || null,
     } : null,
   };

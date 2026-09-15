@@ -1,13 +1,18 @@
 """Bidirectional mic/speaker <-> UDP link, shared by server and client.
 
-ponytail: no Opus — PyOgg's bundled opus.dll turned out to be broken on
-decode (confirmed with two independent ctypes bindings: both encode fine,
-decode always returns silence). The bandwidth/quality knob instead is
-codec="ulaw" (standard G.711 mu-law, ~2x smaller, via the audioop-lts
-package — stdlib audioop was removed in Python 3.13) plus a configurable
-sample_rate. Set per radio from the admin panel; the client reads
-whatever the server has configured via /api/client/radios and matches
-it — the two ends must agree, there's no in-band negotiation.
+ponytail: codec="opus" uses `av` (PyAV, wraps FFmpeg's libopus) — a
+previous attempt with PyOgg's bundled opus.dll was broken on decode
+(confirmed with two independent ctypes bindings: encoded fine, decode
+always returned silence); `av` was verified with a real encode/decode
+round-trip (waveform correlation, not just "no exception") before use.
+It pulls in FFmpeg's full codec set as a side effect (~100+MB installer
+growth) to get the ~500KB of libopus we actually want — a leaner
+ctypes-against-a-bare-libopus.dll build would avoid that, but wasn't
+needed to get a working codec shipped. codec="ulaw" (G.711, ~2x smaller,
+no extra dependency beyond audioop-lts) remains for a lighter-weight
+option. Set per radio from the admin panel; the client reads whatever
+the server has configured via /api/client/radios and matches it — the
+two ends must agree, there's no in-band negotiation.
 """
 
 import audioop
@@ -16,6 +21,7 @@ import socket
 import threading
 import time
 
+import av
 import numpy as np
 import sounddevice as sd
 
@@ -24,6 +30,7 @@ log = logging.getLogger("audio_io")
 SAMPLE_RATE = 48000  # default when a radio doesn't specify one
 CHANNELS = 1
 FRAME_MS = 20
+OPUS_BITRATE = 24000  # good voice quality at low bandwidth; not user-configurable (yet)
 
 PEER_WAIT_LOG_INTERVAL_S = 3.0  # throttle — _on_mic/_on_speaker run every 20ms
 ANNOUNCE_INTERVAL_S = 3.0  # how often to re-poke a known peer — see start()
@@ -67,10 +74,25 @@ class AudioLink:
         self.mic_gain = mic_gain          # 1.0 = unity; adjustable live from the UI
         self.speaker_gain = speaker_gain
 
-        self.codec = codec  # "pcm16" (uncompressed) or "ulaw" (G.711, ~2x smaller)
+        self.codec = codec  # "pcm16" (uncompressed), "ulaw" (G.711, ~2x smaller), or "opus"
         self.sample_rate = sample_rate
         self.frame_samples = sample_rate * FRAME_MS // 1000
         self.frame_bytes = self.frame_samples * CHANNELS * 2  # int16 width, pre-codec
+
+        # Opus is stateful across frames (unlike pcm16/ulaw) — one
+        # persistent encoder/decoder pair per link, not per call.
+        self._opus_encoder = None
+        self._opus_decoder = None
+        if self.codec == "opus":
+            self._opus_encoder = av.CodecContext.create("libopus", "w")
+            self._opus_encoder.sample_rate = self.sample_rate
+            self._opus_encoder.format = "s16"
+            self._opus_encoder.layout = "mono"
+            self._opus_encoder.bit_rate = OPUS_BITRATE
+            self._opus_decoder = av.CodecContext.create("libopus", "r")
+            self._opus_decoder.sample_rate = self.sample_rate
+            self._opus_decoder.format = "s16"
+            self._opus_decoder.layout = "mono"
 
         self.latency_ms = 0.0  # PortAudio-reported device buffering latency, set in start()
         self.jitter_ms = 0.0   # smoothed deviation of received-packet spacing from FRAME_MS
@@ -130,6 +152,24 @@ class AudioLink:
             self.sock.close()
             raise
 
+    def _encode_frame(self, samples: np.ndarray) -> bytes:
+        if self.codec != "opus":
+            return _encode(samples, self.codec)
+        frame = av.AudioFrame(format="s16", layout="mono", samples=len(samples))
+        frame.sample_rate = self.sample_rate
+        frame.planes[0].update(samples.tobytes())
+        return b"".join(bytes(p) for p in self._opus_encoder.encode(frame))
+
+    def _decode_frame(self, data: bytes) -> np.ndarray:
+        if self.codec != "opus":
+            return _decode(data, self.codec)
+        if not data:
+            return np.zeros((0, CHANNELS), dtype=np.int16)
+        frames = self._opus_decoder.decode(av.Packet(data))
+        if not frames:
+            return np.zeros((0, CHANNELS), dtype=np.int16)
+        return np.concatenate([f.to_ndarray().flatten() for f in frames]).astype(np.int16).reshape(-1, CHANNELS)
+
     def _on_mic(self, indata, frames, time_info, status):
         if status:
             log.warning("input status: %s", status)
@@ -142,9 +182,15 @@ class AudioLink:
             return
         try:
             out = _apply_gain(indata, self.mic_gain)
-            self.sock.sendto(_encode(out, self.codec), self.peer)
-        except OSError:
-            log.exception("mic send failed")
+            payload = self._encode_frame(out)
+            if payload:
+                self.sock.sendto(payload, self.peer)
+        except Exception:
+            # Broad on purpose: this runs inside the PortAudio C callback,
+            # which can't propagate exceptions — an Opus encoder error
+            # here would otherwise silently break the callback the same
+            # way an uncaught ConnectionResetError once did in _on_speaker.
+            log.exception("mic encode/send failed")
 
     # ponytail: no jitter buffer/reordering — one packet in, one block out.
     # Add a small jitter buffer if real LAN jitter causes audible glitches.
@@ -186,7 +232,17 @@ class AudioLink:
         if self._last_recv_time is not None:
             self.jitter_ms = _update_jitter(self.jitter_ms, now - self._last_recv_time)
         self._last_recv_time = now
-        samples = _decode(data, self.codec)
+        try:
+            samples = self._decode_frame(data)
+        except Exception:
+            # A garbled/foreign packet must not crash the callback — same
+            # reasoning as the OSError guard above, just for decode errors
+            # instead of socket errors (Opus decode can raise on bad input
+            # in a way plain PCM/ulaw framing never could).
+            log.warning("decode failed on UDP :%s — playing silence", self._listen_port, exc_info=True)
+            outdata.fill(0)
+            self.output_level = 0.0
+            return
         samples = _apply_gain(samples, self.speaker_gain)
         self.output_level = float(np.abs(samples).mean()) if len(samples) else 0.0
         n = min(len(samples), frames)
@@ -252,6 +308,28 @@ if __name__ == "__main__":
     assert j == 0.0
     j = _update_jitter(j, (FRAME_MS + 20) / 1000)  # next one is 20ms late
     assert 1.0 < j < 1.5  # 20ms deviation * 1/16 smoothing
+
+    # Opus round trip: the previous (PyOgg) attempt "worked" in the sense
+    # that it ran without raising, but decode silently returned all zeros
+    # — so this checks the actual waveform survives, not just "no crash".
+    opus_link = AudioLink(input_device=99999, output_device=None, listen_port=0, codec="opus")
+    try:
+        frame_n = opus_link.frame_samples
+        n_frames = 50  # 1s @ 20ms frames
+        t = np.arange(n_frames * frame_n) / opus_link.sample_rate
+        tone = (0.3 * np.sin(2 * np.pi * 440.0 * t) * 32767).astype(np.int16)
+        decoded_chunks = []
+        for i in range(n_frames):
+            chunk = tone[i * frame_n:(i + 1) * frame_n]
+            packet = opus_link._encode_frame(chunk)
+            if packet:
+                decoded_chunks.append(opus_link._decode_frame(packet).flatten())
+        decoded = np.concatenate(decoded_chunks) if decoded_chunks else np.array([], dtype=np.int16)
+        assert len(decoded) > SAMPLE_RATE // 2, "opus decode produced far too little audio back"
+        rms = float(np.sqrt(np.mean(decoded.astype(np.float64) ** 2)))
+        assert rms > 1000, f"opus decode returned near-silence (RMS={rms:.1f}) — same failure mode as the broken PyOgg attempt"
+    finally:
+        opus_link.stop()
 
     pcm16 = np.array([1000, -1000, 32000, -32768, 0], dtype=np.int16)
     assert _encode(pcm16, "pcm16") == pcm16.tobytes()  # passthrough, no codec

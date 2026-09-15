@@ -109,7 +109,7 @@ class RadioAudioConfig(BaseModel):
     udp_port: int
     input_gain: float = 1.0
     output_gain: float = 1.0
-    codec: Literal["pcm16", "ulaw"] = "pcm16"
+    codec: Literal["pcm16", "ulaw", "opus"] = "pcm16"
     sample_rate: Literal[48000, 24000, 16000, 8000] = 48000
 
 
