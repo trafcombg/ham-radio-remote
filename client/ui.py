@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -10,6 +11,9 @@ from PySide6.QtWidgets import (
 
 from client.settings_dialog import SettingsDialog
 from common.updater import download_and_run_installer
+from common.version import APP_VERSION
+
+log = logging.getLogger("ui")
 
 
 class MainWindow(QWidget):
@@ -33,6 +37,8 @@ class MainWindow(QWidget):
         self.radio_list.itemClicked.connect(self._on_radio_clicked)
 
         self.status_label = QLabel("Свързване...")
+        self.version_label = QLabel(f"Клиент v{APP_VERSION}")
+        self.version_label.setStyleSheet("color: gray; font-size: 11px;")
 
         self.ptt_button = QPushButton("PTT (задръж)")
         self.ptt_button.setStyleSheet("font-size: 20px; font-weight: bold; padding: 18px;")
@@ -64,6 +70,12 @@ class MainWindow(QWidget):
         self.update_button.hide()
         self.update_button.clicked.connect(self._apply_update)
 
+        self.amp_section_label = QLabel("Усилватели")
+        self.amp_container = QVBoxLayout()
+        self.amp_widget = QWidget()
+        self.amp_widget.setLayout(self.amp_container)
+        self._amp_signature = None
+
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Радиа"))
         layout.addWidget(self.radio_list)
@@ -81,6 +93,11 @@ class MainWindow(QWidget):
         layout.addLayout(cw_row)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.update_button)
+        layout.addWidget(self.amp_section_label)
+        layout.addWidget(self.amp_widget)
+        layout.addWidget(self.version_label)
+        self.amp_section_label.hide()
+        self.amp_widget.hide()
 
         self.ptt_button.pressed.connect(lambda: self._send_ptt(True))
         self.ptt_button.released.connect(lambda: self._send_ptt(False))
@@ -134,21 +151,59 @@ class MainWindow(QWidget):
     def _open_settings(self):
         active_radios = [r for r in self.app_cfg["radios"] if r.get("active", True)]
         dialog = SettingsDialog(
-            self.app_cfg["server_host"], self.app_cfg["cw"], self.app_cfg["rc28"],
+            self.app_cfg["server_host"], self.app_cfg.get("password", ""), self.app_cfg["cw"], self.app_cfg["rc28"],
             self.app_cfg.get("com_ports", {}), active_radios, self,
         )
         if dialog.exec():
             new_server_host = dialog.result_server_host()
+            new_password = dialog.result_password()
+            password_changed = new_password != self.app_cfg.get("password", "")
+            self.app_cfg["password"] = new_password
+            self.session.password = new_password
             self.app_cfg["cw"] = dialog.result_cw_cfg(self.app_cfg["cw"])
             self.app_cfg["rc28"] = dialog.result_rc28_cfg(self.app_cfg["rc28"])
             self.config_path.write_text(json.dumps(self.app_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
-            if new_server_host and new_server_host != self.session.server_host:
-                asyncio.run_coroutine_threadsafe(self.session.reconnect(new_server_host), self.loop)
+            if (new_server_host and new_server_host != self.session.server_host) or password_changed:
+                asyncio.run_coroutine_threadsafe(self.session.reconnect(new_server_host or self.session.server_host), self.loop)
                 self.status_label.setText("Свързване...")
             else:
                 current = self.radio_list.currentItem()
                 if current:
                     self._switch_radio(current.data(1000))
+
+    def _refresh_amplifier_panel(self):
+        amps = self.session.amplifiers
+        signature = tuple((a["name"], a["can_control"], (a["telemetry"] or {}).get("status")) for a in amps)
+        if signature == self._amp_signature:
+            return
+        self._amp_signature = signature
+
+        while self.amp_container.count():
+            item = self.amp_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self.amp_section_label.setVisible(bool(amps))
+        self.amp_widget.setVisible(bool(amps))
+        for amp in amps:
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            status = (amp["telemetry"] or {}).get("status") or "—"
+            row.addWidget(QLabel(f"{amp['name']} ({status})"))
+            for mode_label, mode in (("Operate", "operate"), ("Standby", "standby"), ("Off", "off")):
+                btn = QPushButton(mode_label)
+                btn.setEnabled(amp["can_control"])
+                btn.clicked.connect(lambda checked=False, n=amp["name"], m=mode: self._set_amp_mode(n, m))
+                row.addWidget(btn)
+            self.amp_container.addWidget(row_widget)
+
+    def _set_amp_mode(self, name: str, mode: str):
+        asyncio.run_coroutine_threadsafe(self._set_amp_mode_async(name, mode), self.loop)
+
+    async def _set_amp_mode_async(self, name: str, mode: str):
+        ok, detail = await self.session.set_amplifier_mode(name, mode)
+        if not ok:
+            log.warning("смяна на режим за %s се провали: %s", name, detail)
 
     def _apply_update(self):
         update = self.update_state.available
@@ -163,6 +218,16 @@ class MainWindow(QWidget):
             self.update_button.setText("Обнови (грешка, опитай пак)")
 
     def _tick(self):
+        server_version = self.session.server_version
+        if server_version and server_version != APP_VERSION:
+            self.version_label.setText(f"Клиент v{APP_VERSION} — сървър v{server_version} (различни версии!)")
+            self.version_label.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        elif server_version:
+            self.version_label.setText(f"Клиент v{APP_VERSION} — сървър v{server_version}")
+            self.version_label.setStyleSheet("color: gray; font-size: 11px;")
+
+        self._refresh_amplifier_panel()
+
         if self.update_state and self.update_state.available and not self.update_button.isVisible():
             self.update_button.setText(f"Налична версия {self.update_state.available['version']} — Обнови")
             self.update_button.show()

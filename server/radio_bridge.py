@@ -30,6 +30,7 @@ from common.audio_io import AudioLink
 from common.civ import ptt_command
 from common.cw_link import CwLink
 from server.cat_bridge import CIV_GET_FREQUENCY, make_cat_server, open_serial
+from server.db import PostgresDb
 from server.ptt_arbiter import PttArbiter, PttDenied
 
 log = logging.getLogger("radio_bridge")
@@ -211,7 +212,11 @@ class RadioBridge:
                     break
                 msg = json.loads(line)
                 if msg["type"] == "hello":
-                    username = msg["username"]
+                    candidate = msg["username"]
+                    if not await self._authorize(candidate, msg.get("password", "")):
+                        await self._send(writer, {"type": "hello_denied", "reason": "грешни данни или няма право за това радио"})
+                        break
+                    username = candidate
                     self.control_clients[writer] = username
                     self.session_ids[writer] = await self.db.start_session(username, self.name)
                     await self._send(writer, {"type": "hello_ack", "radio": self.name})
@@ -229,6 +234,14 @@ class RadioBridge:
             self.control_clients.pop(writer, None)
             writer.close()
             await self._broadcast_status()
+
+    async def _authorize(self, username: str, password: str) -> bool:
+        if not isinstance(self.db, PostgresDb):
+            return True  # no accounts configured — same degraded-open behavior as the admin panel without db.dsn
+        user = await self.db.authenticate(username, password)
+        if not user:
+            return False
+        return bool(user["is_admin"] or await self.db.user_can_access_radio(username, self.name))
 
     async def _handle_ptt(self, writer, username, on):
         if on:
@@ -316,5 +329,34 @@ if __name__ == "__main__":
         bridge._handle_cw_event("georgi", True)  # now free — georgi can take it
         assert bridge.arbiter.holder == "georgi"
 
+    class _FakeAuthDb(PostgresDb):
+        def __init__(self):
+            pass  # skip the real pool/connect
+
+        async def authenticate(self, username, password):
+            if username == "ivan" and password == "secret":
+                return {"username": "ivan", "is_admin": False}
+            if username == "admin" and password == "secret":
+                return {"username": "admin", "is_admin": True}
+            return None
+
+        async def user_can_access_radio(self, username, radio_name):
+            return radio_name == "IC-7300"
+
+    async def _demo_authorize():
+        # No db configured (dev/NullDb) — degraded-open, matches the admin
+        # panel's own behavior without db.dsn.
+        open_bridge = RadioBridge({"name": "IC-7300"}, NullDb())
+        assert await open_bridge._authorize("anyone", "wrong") is True
+
+        bridge = RadioBridge({"name": "IC-7300"}, _FakeAuthDb())
+        assert await bridge._authorize("ivan", "secret") is True       # right password, permitted radio
+        assert await bridge._authorize("ivan", "wrong") is False       # wrong password
+        assert await bridge._authorize("admin", "secret") is True      # admin bypasses per-radio grants
+
+        other_bridge = RadioBridge({"name": "IC-746PRO"}, _FakeAuthDb())
+        assert await other_bridge._authorize("ivan", "secret") is False  # right password, NOT permitted for this radio
+
     asyncio.run(_demo())
+    asyncio.run(_demo_authorize())
     print("radio_bridge.py: ok")

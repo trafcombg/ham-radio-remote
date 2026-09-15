@@ -105,6 +105,21 @@ class NullDb:
     async def authenticate(self, username, password):
         return None
 
+    async def list_users(self):
+        return []
+
+    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази потребители")
+
+    async def delete_user(self, username):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази потребители")
+
+    async def user_can_access_radio(self, username, radio_name) -> bool:
+        return True  # no accounts to check without a db — same degraded-open behavior as require_admin's 503
+
+    async def user_can_access_amplifier(self, username, amplifier_name) -> bool:
+        return True
+
     async def list_radio_configs(self):
         return []
 
@@ -223,6 +238,107 @@ class PostgresDb:
         if not verify_password(password, row["password_hash"], row["password_salt"]):
             return None
         return {"username": username, "is_admin": row["is_admin"]}
+
+    async def list_users(self):
+        """Only accounts with a password (real, admin-created logins) —
+        excludes the bare username rows _user_id() auto-creates for
+        session/transmission logging, which aren't "users" to manage."""
+        async with self.pool.acquire() as c:
+            users = await c.fetch(
+                "SELECT id, username, is_admin FROM users WHERE password_hash IS NOT NULL ORDER BY username"
+            )
+            radio_rows = await c.fetch("SELECT user_id, radio_name FROM user_radio_access")
+            amp_rows = await c.fetch("SELECT user_id, amplifier_name FROM user_amplifier_access")
+        radios_by_user: dict = {}
+        for r in radio_rows:
+            radios_by_user.setdefault(r["user_id"], []).append(r["radio_name"])
+        amps_by_user: dict = {}
+        for r in amp_rows:
+            amps_by_user.setdefault(r["user_id"], []).append(r["amplifier_name"])
+        return [
+            {
+                "username": u["username"],
+                "is_admin": u["is_admin"],
+                "radios": sorted(radios_by_user.get(u["id"], [])),
+                "amplifiers": sorted(amps_by_user.get(u["id"], [])),
+            }
+            for u in users
+        ]
+
+    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names):
+        """password=None keeps the existing hash (editing a user without
+        changing their password); a brand-new user needs a password —
+        admin_api.py enforces that before calling this."""
+        async with self.pool.acquire() as c:
+            async with c.transaction():
+                if password:
+                    digest, salt = hash_password(password)
+                    row = await c.fetchrow(
+                        "INSERT INTO users (username, password_hash, password_salt, is_admin) "
+                        "VALUES ($1,$2,$3,$4) "
+                        "ON CONFLICT (username) DO UPDATE SET "
+                        "password_hash = EXCLUDED.password_hash, password_salt = EXCLUDED.password_salt, "
+                        "is_admin = EXCLUDED.is_admin "
+                        "RETURNING id",
+                        username, digest, salt, is_admin,
+                    )
+                else:
+                    row = await c.fetchrow(
+                        "INSERT INTO users (username, is_admin) VALUES ($1,$2) "
+                        "ON CONFLICT (username) DO UPDATE SET is_admin = EXCLUDED.is_admin "
+                        "RETURNING id",
+                        username, is_admin,
+                    )
+                user_id = row["id"]
+                await c.execute("DELETE FROM user_radio_access WHERE user_id = $1", user_id)
+                await c.execute("DELETE FROM user_amplifier_access WHERE user_id = $1", user_id)
+                for name in radio_names:
+                    await c.execute(
+                        "INSERT INTO user_radio_access (user_id, radio_name) VALUES ($1,$2)", user_id, name,
+                    )
+                for name in amplifier_names:
+                    await c.execute(
+                        "INSERT INTO user_amplifier_access (user_id, amplifier_name) VALUES ($1,$2)", user_id, name,
+                    )
+
+    async def delete_user(self, username):
+        """Soft-delete: clears the login (password + is_admin + access
+        grants) instead of DELETEing the row, since sessions.user_id
+        references it without ON DELETE CASCADE — removing the row would
+        either violate that FK or silently erase session history."""
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow("SELECT id FROM users WHERE username = $1", username)
+            if not row:
+                return
+            user_id = row["id"]
+            await c.execute(
+                "UPDATE users SET password_hash = NULL, password_salt = NULL, is_admin = false WHERE id = $1",
+                user_id,
+            )
+            await c.execute("DELETE FROM user_radio_access WHERE user_id = $1", user_id)
+            await c.execute("DELETE FROM user_amplifier_access WHERE user_id = $1", user_id)
+
+    async def user_can_access_radio(self, username, radio_name) -> bool:
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT u.is_admin, EXISTS("
+                "  SELECT 1 FROM user_radio_access a WHERE a.user_id = u.id AND a.radio_name = $2"
+                ") AS has_access "
+                "FROM users u WHERE u.username = $1 AND u.password_hash IS NOT NULL",
+                username, radio_name,
+            )
+        return bool(row and (row["is_admin"] or row["has_access"]))
+
+    async def user_can_access_amplifier(self, username, amplifier_name) -> bool:
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT u.is_admin, EXISTS("
+                "  SELECT 1 FROM user_amplifier_access a WHERE a.user_id = u.id AND a.amplifier_name = $2"
+                ") AS has_access "
+                "FROM users u WHERE u.username = $1 AND u.password_hash IS NOT NULL",
+                username, amplifier_name,
+            )
+        return bool(row and (row["is_admin"] or row["has_access"]))
 
     async def list_radio_configs(self):
         async with self.pool.acquire() as c:

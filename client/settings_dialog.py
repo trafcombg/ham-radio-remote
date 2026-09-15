@@ -8,12 +8,16 @@ from PySide6.QtWidgets import (
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, server_host: str, cw_cfg: dict, rc28_cfg: dict, com_ports: dict, active_radios: list, parent=None):
+    def __init__(self, server_host: str, password: str, cw_cfg: dict, rc28_cfg: dict, com_ports: dict, active_radios: list, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки — сървър, CW и RC-28")
 
         self.server_host = QLineEdit(server_host)
         self.server_host.setPlaceholderText("IP или име на сървъра, напр. 192.168.1.10")
+
+        self.password = QLineEdit(password)
+        self.password.setEchoMode(QLineEdit.Password)
+        self.password.setPlaceholderText("парола за този сървър (зададена от администратора)")
 
         self.source = QComboBox()
         self.source.addItem("Прав ключ", "straight")
@@ -41,6 +45,7 @@ class SettingsDialog(QDialog):
 
         form = QFormLayout(self)
         form.addRow("Сървър", self.server_host)
+        form.addRow("Парола", self.password)
         form.addRow("CW източник", self.source)
         form.addRow("Скорост (WPM)", self.wpm)
         form.addRow("Paddle порт", self.paddle_port)
@@ -61,6 +66,9 @@ class SettingsDialog(QDialog):
 
     def result_server_host(self) -> str:
         return self.server_host.text().strip()
+
+    def result_password(self) -> str:
+        return self.password.text()
 
     def result_cw_cfg(self, base_cw_cfg: dict) -> dict:
         cfg = dict(base_cw_cfg)

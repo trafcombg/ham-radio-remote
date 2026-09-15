@@ -24,7 +24,7 @@
 </style>
 </head>
 <body>
-<h1>HAM Radio Remote — Admin панел</h1>
+<h1>HAM Radio Remote — Admin панел <small id="versionLabel" style="font-size:.6em; color:#888;"></small></h1>
 <div id="updateBanner">
   <span id="updateText"></span>
   <button id="updateApplyBtn">Инсталирай и рестартирай сървъра</button>
@@ -115,6 +115,30 @@
   <thead><tr><th>Име</th><th>Модел</th><th>Транспорт</th><th>Статус</th><th>Мощност/SWR/Темп</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
+
+<h1>Потребители</h1>
+<button id="addUserBtn">+ Добави потребител</button>
+<table id="userTable">
+  <thead><tr><th>Потребител</th><th>Admin</th><th>Радиа</th><th>Усилватели</th><th></th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<dialog id="userDialog">
+  <h2 id="userDialogTitle">Потребител</h2>
+  <form id="userForm">
+    <label>Потребителско име<input name="username" required></label>
+    <label>Парола<input name="password" type="password" placeholder="остави празно, за да не се променя (при редакция)"></label>
+    <label><input name="is_admin" type="checkbox" style="width:auto; display:inline-block;"> Admin (пълен достъп до всичко)</label>
+    <label>Радиа с достъп</label>
+    <div id="userRadioChecks"></div>
+    <label>Усилватели с достъп</label>
+    <div id="userAmpChecks"></div>
+    <div style="margin-top:1rem; display:flex; gap:.5rem;">
+      <button type="submit">Запази</button>
+      <button type="button" id="userCancelBtn" class="secondary">Отказ</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="ampDialog">
   <h2 id="ampDialogTitle">Усилвател</h2>
@@ -517,9 +541,113 @@ async function deleteAmplifier(name) {
   loadAmplifiers();
 }
 
+let users = [];
+const userDialog = document.getElementById("userDialog");
+const userForm = document.getElementById("userForm");
+let editingUsername = null;
+
+async function loadUsers() {
+  const res = await api("/api/users");
+  const body = await res.json();
+  users = body.users;
+  renderUserTable();
+}
+
+function renderUserTable() {
+  const tbody = document.querySelector("#userTable tbody");
+  tbody.innerHTML = "";
+  for (const u of users) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${u.username}</td>
+      <td>${u.is_admin ? "да" : "не"}</td>
+      <td>${u.is_admin ? "всички" : (u.radios.join(", ") || "—")}</td>
+      <td>${u.is_admin ? "всички" : (u.amplifiers.join(", ") || "—")}</td>
+      <td></td>`;
+    const actionsTd = tr.lastElementChild;
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Редактирай";
+    editBtn.className = "secondary";
+    editBtn.onclick = () => openUserEdit(u);
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Изтрий";
+    delBtn.className = "danger";
+    delBtn.onclick = () => deleteUser(u.username);
+    actionsTd.append(editBtn, delBtn);
+    tbody.appendChild(tr);
+  }
+}
+
+function _buildAccessChecks(containerId, names, checkedNames) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = "";
+  for (const name of names) {
+    const label = document.createElement("label");
+    label.style.cssText = "display:inline-block; width:auto; margin-right: .8rem;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = name;
+    cb.style.width = "auto";
+    cb.checked = checkedNames.includes(name);
+    label.append(cb, " " + name);
+    container.appendChild(label);
+  }
+}
+
+function openUserEdit(u) {
+  editingUsername = u ? u.username : null;
+  document.getElementById("userDialogTitle").textContent = u ? "Редактирай " + u.username : "Нов потребител";
+  userForm.reset();
+  _buildAccessChecks("userRadioChecks", radios.map(r => r.name), u ? u.radios : []);
+  _buildAccessChecks("userAmpChecks", amplifiers.map(a => a.name), u ? u.amplifiers : []);
+  if (u) {
+    userForm.username.value = u.username;
+    userForm.is_admin.checked = u.is_admin;
+  }
+  userDialog.showModal();
+}
+
+document.getElementById("addUserBtn").onclick = () => openUserEdit(null);
+document.getElementById("userCancelBtn").onclick = () => userDialog.close();
+
+userForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(userForm);
+  const checkedValues = (containerId) =>
+    Array.from(document.querySelectorAll(`#${containerId} input:checked`)).map(cb => cb.value);
+  const cfg = {
+    username: f.get("username"),
+    password: f.get("password") || null,
+    is_admin: f.get("is_admin") === "on",
+    radios: checkedValues("userRadioChecks"),
+    amplifiers: checkedValues("userAmpChecks"),
+  };
+  const isNew = !editingUsername;
+  if (isNew && !cfg.password) {
+    alert("Паролата е задължителна за нов потребител.");
+    return;
+  }
+  const url = isNew ? "/api/users" : `/api/users/${encodeURIComponent(editingUsername)}`;
+  const res = await api(url, { method: isNew ? "POST" : "PUT", body: JSON.stringify(cfg) });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert("Грешка: " + JSON.stringify(body.detail || res.status));
+    return;
+  }
+  userDialog.close();
+  loadUsers();
+};
+
+async function deleteUser(username) {
+  if (!confirm(`Изтриване на ${username}?`)) return;
+  await api(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+  loadUsers();
+}
+
 async function checkForUpdate() {
   const res = await api("/api/update");
   const body = await res.json();
+  document.getElementById("versionLabel").textContent = `v${body.current_version}`;
   const banner = document.getElementById("updateBanner");
   if (body.pending) {
     document.getElementById("updateText").textContent =
@@ -556,6 +684,7 @@ document.getElementById("updateApplyBtn").onclick = async () => {
   if (!me.user || !me.user.is_admin) { location.href = "/login"; return; }
   loadRadios();
   loadAmplifiers();
+  loadUsers();
   checkForUpdate();
   setInterval(checkForUpdate, 5 * 60 * 1000);
 })();

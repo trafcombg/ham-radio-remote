@@ -20,6 +20,24 @@ CREATE TABLE IF NOT EXISTS radios (
     model TEXT NOT NULL
 );
 
+-- Per-user access grants: which radios/amplifiers a non-admin account may
+-- use. Admins bypass these entirely (see db.py user_can_access_*). Keyed
+-- by name (not a foreign key to radio_configs/amplifier_configs) so a
+-- grant survives deleting and re-adding a radio with the same name, and
+-- so it works even against server/config.json-only (non-Postgres-config)
+-- radios.
+CREATE TABLE IF NOT EXISTS user_radio_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    radio_name TEXT NOT NULL,
+    PRIMARY KEY (user_id, radio_name)
+);
+
+CREATE TABLE IF NOT EXISTS user_amplifier_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    amplifier_name TEXT NOT NULL,
+    PRIMARY KEY (user_id, amplifier_name)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),

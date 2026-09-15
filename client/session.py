@@ -17,10 +17,12 @@ switches if that proves disruptive in practice.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import logging
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from client import com0com
@@ -37,6 +39,7 @@ from common.cw_link import CwLink
 log = logging.getLogger("session")
 
 RADIOS_FETCH_TIMEOUT_S = 5
+AMPLIFIER_POLL_INTERVAL_S = 5
 
 
 class RadioSession:
@@ -44,12 +47,16 @@ class RadioSession:
         self.app_cfg = app_cfg
         self.config_path = config_path
         self.username = app_cfg["username"]
+        self.password = app_cfg.get("password", "")
         self.server_host = app_cfg["server_host"]
 
         self.status_clients: dict = {}  # radio name -> ControlClient, for the radio picker
         self.cat_relays: dict = {}      # radio name -> ComRelay, one per ACTIVE radio, always on
         self._cat_tasks: dict = {}
 
+        self.server_version = None
+        self.amplifiers: list = []  # polled periodically — see start_amplifier_poll(); ui.py just reads this
+        self._amp_poll_task = None
         self.radio_name = None
         self.control = None
         self.audio = None
@@ -61,10 +68,62 @@ class RadioSession:
         self.rc28 = None
         self._tasks = []
 
+    def _api_base(self) -> str:
+        return f"http://{self.server_host}:{self.app_cfg.get('server_api_port', 8080)}"
+
+    def _basic_auth_header(self) -> str:
+        token = base64.b64encode(f"{self.username}:{self.password}".encode()).decode()
+        return f"Basic {token}"
+
     def _fetch_radios(self) -> list:
-        url = f"http://{self.server_host}:{self.app_cfg.get('server_api_port', 8080)}/api/client/radios"
+        url = f"{self._api_base()}/api/client/radios"
         with urllib.request.urlopen(url, timeout=RADIOS_FETCH_TIMEOUT_S) as resp:
-            return json.loads(resp.read())["radios"]
+            body = json.loads(resp.read())
+        self.server_version = body.get("server_version")
+        return body["radios"]
+
+    def _fetch_amplifiers_sync(self) -> list:
+        req = urllib.request.Request(
+            f"{self._api_base()}/api/client/amplifiers", headers={"Authorization": self._basic_auth_header()}
+        )
+        with urllib.request.urlopen(req, timeout=RADIOS_FETCH_TIMEOUT_S) as resp:
+            return json.loads(resp.read())["amplifiers"]
+
+    async def fetch_amplifiers(self) -> list:
+        """Every configured amplifier, each flagged with can_control for
+        this user — the caller (UI) greys out ones this user can't touch
+        rather than hiding them, same as inactive radios."""
+        try:
+            return await asyncio.to_thread(self._fetch_amplifiers_sync)
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            log.warning("не успях да взема списъка с усилватели (%s)", e)
+            return []
+
+    def _set_amplifier_mode_sync(self, name: str, mode: str) -> tuple:
+        url = f"{self._api_base()}/api/client/amplifiers/{urllib.parse.quote(name)}/mode"
+        req = urllib.request.Request(
+            url, method="POST",
+            data=json.dumps({"mode": mode}).encode(),
+            headers={"Authorization": self._basic_auth_header(), "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=RADIOS_FETCH_TIMEOUT_S) as resp:
+                return True, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            return False, detail
+
+    async def set_amplifier_mode(self, name: str, mode: str) -> tuple:
+        return await asyncio.to_thread(self._set_amplifier_mode_sync, name, mode)
+
+    async def start_amplifier_poll(self):
+        if self._amp_poll_task is None:
+            self._amp_poll_task = asyncio.create_task(self._amplifier_poll_loop())
+
+    async def _amplifier_poll_loop(self):
+        while True:
+            self.amplifiers = await self.fetch_amplifiers()
+            await asyncio.sleep(AMPLIFIER_POLL_INTERVAL_S)
 
     async def refresh_radios(self) -> list:
         """Pulls the current radio list (ports + active flag) from the
@@ -90,7 +149,7 @@ class RadioSession:
         for radio_cfg in self.app_cfg.get("radios", []):
             if not radio_cfg.get("active", True):
                 continue
-            client = ControlClient(self.username, self.server_host, radio_cfg["control_port"])
+            client = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
             self.status_clients[radio_cfg["name"]] = client
             asyncio.create_task(client.run())
 
@@ -142,7 +201,7 @@ class RadioSession:
         await self._teardown()
         self.radio_name = radio_cfg["name"]
 
-        self.control = ControlClient(self.username, self.server_host, radio_cfg["control_port"])
+        self.control = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
         self._tasks.append(asyncio.create_task(self.control.run()))
 
         audio_cfg = self.app_cfg["audio"]
@@ -229,6 +288,8 @@ class RadioSession:
 
     async def shutdown(self):
         await self._teardown()
+        if self._amp_poll_task:
+            self._amp_poll_task.cancel()
         for task in self._cat_tasks.values():
             task.cancel()
         for client in self.status_clients.values():
