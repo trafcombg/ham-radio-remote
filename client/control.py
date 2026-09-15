@@ -16,6 +16,7 @@ class ControlClient:
         self.server_port = server_port
         self.writer = None
         self.busy_by = None  # username currently holding PTT on this radio, or None
+        self.last_notice = None  # one-shot message for the UI, e.g. admin reconfigured the radio
 
     async def run(self):
         reader, writer = await asyncio.open_connection(self.server_host, self.server_port)
@@ -31,6 +32,9 @@ class ControlClient:
                     self.busy_by = msg["busy_by"]
                 elif msg["type"] == "ptt_denied":
                     log.warning("PTT denied: %s", msg["reason"])
+                elif msg["type"] == "reconfigured":
+                    self.last_notice = "Радиото беше преконфигурирано от администратор — връзката се затваря"
+                    log.warning(self.last_notice)
         finally:
             self.writer = None
 

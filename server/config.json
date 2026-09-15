@@ -2,6 +2,10 @@
   "db": {
     "dsn": null
   },
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
   "radios": [
     {
       "name": "IC-7300",

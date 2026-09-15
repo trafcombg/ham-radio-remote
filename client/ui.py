@@ -37,6 +37,12 @@ class MainWindow(QWidget):
         asyncio.run_coroutine_threadsafe(self.control.request_ptt(on), self.loop)
 
     def _tick(self):
+        if self.control.last_notice:
+            self.status_label.setText(self.control.last_notice)
+            self.control.last_notice = None
+            self.level_bar.setValue(min(100, int(self.audio.level / 200 * 100)))
+            return
+
         connected = self.relay.writer is not None
         busy_by = self.control.busy_by
         if not connected:

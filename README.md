@@ -1,29 +1,43 @@
-# HAM Radio Remote — Фаза 1 + Фаза 2
+# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3
 
 Клиент-сървър дистанционно управление на Icom радиостанции: CAT bridge
 (виртуален COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
-(UDP + Opus) + PTT арбитраж между потребители. Виж
+(UDP) + PTT арбитраж между потребители + уеб admin панел. Виж
 [ham-radio-remote-plan.md](ham-radio-remote-plan.md) за пълния план по фази.
 
-## Какво добавя Фаза 2 към Фаза 1
+**Аудио бележка:** PyOgg-ната bundled `opus.dll` се оказа счупена на
+decode (потвърдено с два независими ctypes wrapper-а — encode работи,
+decode винаги връща тишина). Засега аудиото е uncompressed PCM вместо
+Opus — за LAN честотната лента не е проблем (~768kbps mono/48kHz), а и
+latency-то е по-ниско без encode/decode. Виж `common/audio_io.py`.
 
-- Второ радио (IC-746PRO през microHAM, PTT през RTS/DTR линия вместо CAT)
-- PTT методът е абстрахиран (`server/radio_bridge.py`: `CivPtt` / `LinePtt`), конфигурируем per радио
-- Стабилна device идентификация по VID/PID/сериен номер/USB път (`server/device_registry.py`) вместо по COM име/индекс
-- Отделен control канал (login + PTT заявка/отговор + статус) — PTT вече не минава като сурови CAT байтове от клиента, защото арбитражът трябва да го прихване преди да стигне до радиото, а RTS/DTR изобщо не са CAT данни
-- PTT lock per радио (`server/ptt_arbiter.py`) — втори потребител на заето радио бива отказан, не опашкуван
-- Session/transmission логване в PostgreSQL (`server/db.py`) — по избор, работи и без база (`NullDb`)
+## Какво добавя Фаза 3 към Фаза 2
 
-## Структура (нови/променени спрямо Фаза 1)
+- FastAPI admin панел (`server/admin_api.py`), достъпен отдалечено от
+  всеки компютър в мрежата (bind на `0.0.0.0`, не само localhost)
+- Радио конфигурацията вече се пази в PostgreSQL (`radio_configs`
+  таблица), с hot-reload на отделно радио без рестарт на сървъра
+  (`server/radio_manager.py`)
+- Test/Verify бутон в панела — активна CAT проверка (CI-V "get
+  frequency") преди да приложиш конфигурация
+- Ролеви достъп: admin login с потребител+парола (`server/create_admin.py`,
+  `server/web_auth.py`) — обикновените потребители продължават да имат
+  само десктоп клиента, без парола (непроменено от Фаза 1/2)
+- Ако радио се преконфигурира докато е заето: заявката се отказва с
+  409 + кой го държи, освен ако admin-ът не потвърди (`force`) — засегнатият
+  клиент получава ясно съобщение и връзката пада контролирано
+
+## Структура (нови/променени спрямо Фаза 2)
 
 ```
-server/device_registry.py  VID/PID/serial/location -> COM порт / аудио индекс, + device watcher
-server/list_devices.py     помощна CLI: показва наличните устройства и техните стабилни ID
-server/ptt_arbiter.py      lock: кой потребител предава в момента, per радио
-server/db.py                 PostgreSQL логване (NullDb fallback без конфигурирана база)
-server/radio_bridge.py     оркестрира едно радио: CAT relay + control канал + аудио + PTT
-server/main.py               зарежда списък радиа, резолва устройства, стартира bridge-овете
-client/control.py           login + PTT заявка/отговор + статус "заето от X"
+server/admin_api.py    FastAPI: login, /api/radios CRUD, /api/devices, Test/Verify
+server/web/            admin.html + login.html (vanilla HTML/JS, без build стъпка)
+server/web_auth.py     подписани session cookies (itsdangerous)
+server/radio_manager.py  start/stop/reload на радиа by runtime, seed от config.json в DB
+server/create_admin.py CLI: python -m server.create_admin <user> <парола>
+server/db.py             +auth (pbkdf2 hash), +radio_configs CRUD
+server/cat_bridge.py    +probe_serial_port() за Test/Verify, make_cat_server() разделен от serve_forever
+server/radio_bridge.py +shutdown()/test_cat(), за hot-reload и Test/Verify на running радио
 ```
 
 ## Инсталация
@@ -40,55 +54,53 @@ com0com виртуална двойка портове (по една на ра�
 
 1. Пусни `python -m server.list_devices`, за да видиш реалните VID/PID/
    сериен номер на CAT адаптерите и `endpoint_id` на аудио устройствата.
-2. Попълни `server/config.json` — списък `"radios"`, по един запис на
-   радио. За идентификация по VID/PID: попълни `cat.vid`/`cat.pid` (и
-   `serial_number`/`location` ако две устройства споделят VID/PID — при
-   двусмислие сървърът отказва да стартира точно това радио и логва
-   грешка, вместо да гадае). Или просто задай `cat.serial_port` директно,
-   ако не искаш VID/PID резолюция.
-3. `ptt.method`: `"civ"` (IC-7300 — PTT през CI-V команда) или `"rts"`/
-   `"dtr"` (IC-746PRO+microHAM — PTT през серийна линия). `ptt.serial_port:
-   null` означава "използвай същия сериен порт като CAT" (типично за
-   microHAM интерфейси).
-4. По избор: `db.dsn` — PostgreSQL connection string за логване на
-   сесии/предавания. Приложи схемата веднъж: `psql <dsn> -f server/db/schema.sql`.
-   Без `dsn` логването просто е изключено (`NullDb`), останалото работи.
-5. `client/config.json` (радио 1) и `client/config.ic746.json` (радио 2,
-   различен потребител) — попълни `com.local_port` с твоя com0com порт.
+2. Първо стартиране: `server/config.json` — списък `"radios"` — служи
+   само като seed. Ако `db.dsn` е зададен и таблицата `radio_configs` е
+   празна, сървърът я зарежда там еднократно; след това конфигурацията
+   се управлява през admin панела, не през config.json.
+3. `db.dsn` вече е практически задължителен за Фаза 3 (login и radio
+   CRUD изискват PostgreSQL) — приложи схемата: `psql <dsn> -f server/db/schema.sql`.
+   Без `dsn` bridge-овете пак тръгват от config.json, но admin панелът
+   е read-only/недостъпен за login.
+4. Създай admin потребител: `python -m server.create_admin ivan парола123`.
+5. `client/config.json` / `client/config.ic746.json` — непроменени
+   спрямо Фаза 2.
 
 ## Стартиране
 
 ```bash
-# сървър
+# сървър (CAT/аудио bridge-ове + admin панел на :8080)
 python -m server.main
 
-# клиент 1 (IC-7300, потребител "ivan")
+# клиенти — непроменено спрямо Фаза 2
 python -m client.main
-
-# клиент 2 (IC-746PRO, потребител "georgi") — на друга машина или втори прозорец
 python -m client.main config.ic746.json
 ```
 
+Admin панел: `http://<IP на сървъра>:8080/` от кой да е компютър в
+мрежата (не само localhost).
+
 ## Тест
 
-**Multi-radio / multi-user:** стартирай сървъра, после двата клиента —
-и двата трябва да покажат "Свързан", всеки контролира различно радио,
-независимо аудио и CAT.
+**Admin панел отдалечено:** от друг компютър в мрежата отвори
+`http://<server-ip>:8080/`, влез с admin потребителя, виж списъка с
+радиа + статус (свободно/заето от X).
 
-**PTT lock:** задръж PTT на клиент 1 — статусът му минава на "Предава".
-Ако друг потребител се свърже КЪМ СЪЩОТО радио (втори control клиент на
-същия control порт) и опита PTT, получава `ptt_denied` с ясна причина
-("заето от ivan") вместо да ключва радиото — виж
-`server/ptt_arbiter.py`'s self-check по-долу за логиката без хардуер.
+**Смяна на CAT порт/PTT метод "в движение":** редактирай радио в
+панела (напр. смени `serial_port` или `ptt.method`), натисни "Провери
+връзка" за активна CAT проверка, после "Запази" — радиото се
+рестартира само то, останалите продължават да работят без прекъсване.
 
-**RTS/DTR PTT:** на IC-746PRO+microHAM, задръж PTT в клиента — микрофонният
-вход на microHAM интерфейса трябва да се включи (провери индикатора на
-интерфейса/радиото), без да е изпратена нито една CI-V команда.
+**Заето радио:** докато потребител държи PTT на радио, опитай да
+запазиш промяна в конфигурацията му от панела — трябва да получиш
+предупреждение "заето от X" и избор дали да продължиш; ако потвърдиш,
+свързаният клиент вижда ясно съобщение, че радиото е преконфигурирано.
 
-## Самопроверки (без хардуер)
+## Самопроверки (без хардуер/база)
 
 ```bash
 python server/ptt_arbiter.py
 python server/device_registry.py
+python server/db.py
 python common/civ.py
 ```

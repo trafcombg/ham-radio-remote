@@ -2,4 +2,3 @@ PySide6
 pyserial
 sounddevice
 numpy
-PyOgg

@@ -5,6 +5,9 @@
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
+    password_hash TEXT,
+    password_salt TEXT,
+    is_admin BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -27,4 +30,27 @@ CREATE TABLE IF NOT EXISTS transmissions (
     session_id INTEGER NOT NULL REFERENCES sessions(id),
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ
+);
+
+-- Phase 3: radio configuration itself lives here, editable from the admin
+-- panel and hot-reloadable per radio without restarting the server.
+CREATE TABLE IF NOT EXISTS radio_configs (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    model TEXT NOT NULL,
+    cat_vid INTEGER,
+    cat_pid INTEGER,
+    cat_serial_number TEXT,
+    cat_location TEXT,
+    cat_serial_port TEXT,
+    cat_baud INTEGER NOT NULL DEFAULT 19200,
+    cat_tcp_port INTEGER NOT NULL,
+    control_port INTEGER NOT NULL,
+    audio_name_contains TEXT,
+    audio_endpoint_id TEXT,
+    audio_udp_port INTEGER NOT NULL,
+    ptt_method TEXT NOT NULL DEFAULT 'civ',
+    ptt_civ_address INTEGER,
+    ptt_serial_port TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

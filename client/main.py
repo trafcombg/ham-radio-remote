@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication
 from client.com_relay import ComRelay
 from client.control import ControlClient
 from client.ui import MainWindow
-from common.audio_io import OpusAudioLink
+from common.audio_io import AudioLink
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("client")
@@ -44,7 +44,7 @@ def main():
     control = ControlClient(cfg["username"], cfg["control"]["server_host"], cfg["control"]["server_port"])
     loop = start_asyncio_thread([relay.run, control.run])
 
-    audio = OpusAudioLink(
+    audio = AudioLink(
         input_device=cfg["audio"]["input_device"],
         output_device=cfg["audio"]["output_device"],
         listen_port=cfg["audio"]["local_port"],
