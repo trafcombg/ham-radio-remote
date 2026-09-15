@@ -22,7 +22,7 @@
     "output_device": null,
     "local_port": 5005,
     "mic_gain": 0.84,
-    "speaker_gain": 1.0
+    "speaker_gain": 2.0
   },
   "cw": {
     "local_port": 5105,
@@ -44,10 +44,10 @@
       "active": true,
       "cat_port": 4532,
       "control_port": 4632,
-      "audio_port": 5004,
+      "audio_port": 5005,
       "cw_port": 5104,
       "civ_address": 148
     }
   ],
-  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAAHgD7VdHzG55nvL6iI6O2ve6EBcR2lG340eNLLwVMRDgAAAAAOgAAAAAIAACAAAADjRy/9NUkgVysGvzoth7wOSXP10P1woObgCXKvTttbbxAAAAAgi9bOsTT5Ix9nTcPaVcybQAAAAFpsi5G0/Gt7Xswhr7ED1nc7HJEJGVLbgvELrhRJ9b1lKDqF62DAlLCH0aiuoc6DmP+nw9er1kzDPkKWI+7pA1c="
+  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAA1yx1JQ1GPfzzR7RdwFCverGgBmg3wSnUqIfJQnI1CFwAAAAAOgAAAAAIAACAAAAByHqj1DAXFM99FV4Nl9YA3wVBQ0P28nICmoLpefvDJHBAAAAD8/weETtozynjL6fell067QAAAAKY1eaBQh9CWtHAVf23n1c+jbyBSmcPawTfbzNXKDhDrBGgdJH1Epeze9Xr4Gfcvhm1v3J+XOW90k4hQPz/f6Pg="
 }

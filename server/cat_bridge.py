@@ -21,6 +21,7 @@ class SerialRelay(asyncio.Protocol):
         self.transport = transport
 
     def data_received(self, data):
+        log.debug("radio -> %s: %s", self.tcp_writer.get_extra_info("peername") if self.tcp_writer else "(no CAT client)", data.hex())
         if self.tcp_writer:
             self.tcp_writer.write(data)
         if self.on_data:
@@ -55,6 +56,7 @@ async def make_cat_server(serial_proto: SerialRelay, tcp_host: str, tcp_port: in
                 data = await reader.read(256)
                 if not data:
                     break
+                log.debug("%s -> radio: %s", peer, data.hex())
                 if serial_proto.transport is None:
                     log.warning("CAT data from %s dropped — serial connection isn't up", peer)
                     continue

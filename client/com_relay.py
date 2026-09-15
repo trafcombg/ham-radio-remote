@@ -45,6 +45,7 @@ class ComRelay:
         while True:
             data = await loop.run_in_executor(None, self.serial.read, 256)
             if data:
+                log.debug("%s -> server: %s", self.com_port, data.hex())
                 self.writer.write(data)
                 await self.writer.drain()
             else:
@@ -56,6 +57,7 @@ class ComRelay:
             if not data:
                 log.warning("CAT bridge connection closed")
                 break
+            log.debug("server -> %s: %s", self.com_port, data.hex())
             self.serial.write(data)
             if self.on_cat_data:
                 self.on_cat_data(data)
