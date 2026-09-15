@@ -25,6 +25,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import serial
+
 from client import com0com
 from client.com_relay import ComRelay
 from client.control import ControlClient
@@ -41,6 +43,18 @@ log = logging.getLogger("session")
 RADIOS_FETCH_TIMEOUT_S = 5
 AMPLIFIER_POLL_INTERVAL_S = 5
 CONTROL_RECONNECT_DELAY_S = 3.0
+CAT_BUSY_POLL_INTERVAL_S = 4.0
+
+
+def _is_port_free(port: str) -> bool:
+    """Windows COM ports are exclusive-access by default — if some other
+    process (WSJT-X, N1MM+, ...) already has the exposed com0com port
+    open, trying to open it ourselves fails. That's the whole check."""
+    try:
+        serial.Serial(port, timeout=0).close()
+        return True
+    except (serial.SerialException, OSError):
+        return False
 
 
 async def _run_control_client_forever(client: ControlClient):
@@ -96,6 +110,8 @@ class RadioSession:
         self._status_tasks: dict = {}
         self.cat_relays: dict = {}      # radio name -> ComRelay, one per ACTIVE radio, always on
         self._cat_tasks: dict = {}
+        self.external_cat_busy: dict = {}  # radio name -> bool, exposed COM port held by another app — see start_cat_busy_poll()
+        self._cat_busy_poll_task = None
 
         self.server_version = None
         self.amplifiers: list = []  # polled periodically — see start_amplifier_poll(); ui.py just reads this
@@ -168,6 +184,25 @@ class RadioSession:
         while True:
             self.amplifiers = await self.fetch_amplifiers()
             await asyncio.sleep(AMPLIFIER_POLL_INTERVAL_S)
+
+    async def start_cat_busy_poll(self):
+        if self._cat_busy_poll_task is None:
+            self._cat_busy_poll_task = asyncio.create_task(self._cat_busy_poll_loop())
+
+    async def _cat_busy_poll_loop(self):
+        """Radio picker only ever showed PTT-holder busyness — a radio
+        whose exposed COM port a local CAT app (WSJT-X etc.) already has
+        open looked "free" even though opening it again from elsewhere
+        would just fail. Surface that too."""
+        while True:
+            com_ports = self.app_cfg.get("com_ports", {})
+            busy = {}
+            for name in self.cat_relays:
+                exposed = com_ports.get(name, {}).get("local")
+                if exposed:
+                    busy[name] = not await asyncio.to_thread(_is_port_free, exposed)
+            self.external_cat_busy = busy
+            await asyncio.sleep(CAT_BUSY_POLL_INTERVAL_S)
 
     async def refresh_radios(self) -> list:
         """Pulls the current radio list (ports + active flag) from the
@@ -249,6 +284,7 @@ class RadioSession:
         self.radio_name = radio_cfg["name"]
 
         self.control = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
+        self.control.on_reconfigured = lambda name=radio_cfg["name"]: asyncio.create_task(self._handle_reconfigured(name))
         self._tasks.append(asyncio.create_task(_run_control_client_forever(self.control)))
 
         audio_cfg = self.app_cfg["audio"]
@@ -312,6 +348,22 @@ class RadioSession:
 
         log.info("switched to radio %s", self.radio_name)
 
+    async def _handle_reconfigured(self, radio_name: str):
+        """The control connection just told us the admin changed this
+        radio's config server-side (e.g. codec/sample_rate) and closed on
+        us. switch_to() built the AudioLink from whatever settings were
+        current back then, and nothing ever rebuilt it — so the two sides
+        could silently drift onto different codecs/rates, which sounds
+        like garbled/choppy audio, not a dropped connection. Re-fetch and
+        re-switch to pick up whatever changed, but only if the operator
+        hasn't already switched to a different radio in the meantime."""
+        if radio_name != self.radio_name:
+            return
+        radios = await self.refresh_radios()
+        radio_cfg = next((r for r in radios if r["name"] == radio_name), None)
+        if radio_cfg and radio_cfg.get("active", True) and radio_name == self.radio_name:
+            await self.switch_to(radio_cfg)
+
     async def _teardown(self):
         for relay in self.cat_relays.values():
             relay.on_cat_data = None  # clear any stale RC-28 hookup from the previously-selected radio
@@ -361,6 +413,8 @@ class RadioSession:
         await self._teardown()
         if self._amp_poll_task:
             self._amp_poll_task.cancel()
+        if self._cat_busy_poll_task:
+            self._cat_busy_poll_task.cancel()
         for task in self._cat_tasks.values():
             task.cancel()
         for task in self._status_tasks.values():
@@ -422,6 +476,18 @@ if __name__ == "__main__":
                 await task
         assert len(hellos) >= 2, f"expected the client to reconnect after the drop, got {len(hellos)} hello(s)"
 
+    assert _is_port_free("COM_DOES_NOT_EXIST_9999") is False  # can't open -> reported busy, not a crash
+
+    async def _demo_reconfigured_ignores_stale_radio():
+        # The operator already switched to a different radio by the time
+        # a late "reconfigured" arrives for the OLD one — must not yank
+        # them back onto it (and must not touch the network to find out).
+        session = RadioSession({"username": "t", "server_host": "127.0.0.1", "com": {"baud": 19200}})
+        session.radio_name = "CURRENT"
+        await session._handle_reconfigured("STALE")
+        assert session.radio_name == "CURRENT"
+
     asyncio.run(_demo())
     asyncio.run(_demo_reconnect())
+    asyncio.run(_demo_reconfigured_ignores_stale_radio())
     print("session.py: ok")

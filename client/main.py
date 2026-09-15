@@ -107,6 +107,7 @@ def main():
     except Exception:
         log.warning("не успях да взема списъка с радиа от сървъра при старт", exc_info=True)
     asyncio.run_coroutine_threadsafe(session.start_amplifier_poll(), loop)
+    asyncio.run_coroutine_threadsafe(session.start_cat_busy_poll(), loop)
     asyncio.run_coroutine_threadsafe(_update_check_loop(update_state), loop)
 
     ports = [(cfg["audio"]["local_port"], "udp"), (cfg["cw"]["local_port"], "udp")]

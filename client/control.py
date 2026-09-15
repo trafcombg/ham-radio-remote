@@ -21,6 +21,7 @@ class ControlClient:
         self.busy_by = None  # username currently holding PTT on this radio, or None
         self.last_notice = None  # one-shot message for the UI, e.g. admin reconfigured the radio
         self.denied = False  # true once the server rejects hello (bad password / no permission)
+        self.on_reconfigured = None  # optional callable() — e.g. session.py rebuilding AudioLink with new settings
 
     async def run(self):
         reader, writer = await asyncio.open_connection(self.server_host, self.server_port)
@@ -55,6 +56,9 @@ class ControlClient:
                 elif msg["type"] == "reconfigured":
                     self.last_notice = "Радиото беше преконфигурирано от администратор — връзката се затваря"
                     log.warning(self.last_notice)
+                    if self.on_reconfigured:
+                        self.on_reconfigured()
+                    break
                 elif msg["type"] == "ping":
                     pass  # server's keepalive — just proof of life
         finally:
@@ -78,3 +82,26 @@ class ControlClient:
         if self.writer:
             self.writer.write((json.dumps(obj) + "\n").encode())
             await self.writer.drain()
+
+
+if __name__ == "__main__":
+    async def _demo_reconfigured_fires_callback_and_breaks():
+        # A radio config change (e.g. codec/sample_rate from the admin
+        # panel) sends "reconfigured" then closes — run() must invoke the
+        # callback AND return promptly, not keep waiting on the socket.
+        async def handle(reader, writer):
+            await reader.readline()  # hello
+            writer.write(b'{"type": "reconfigured"}\n')
+            await writer.drain()
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            client = ControlClient("ivan", "secret", "127.0.0.1", port)
+            fired = []
+            client.on_reconfigured = lambda: fired.append(True)
+            await asyncio.wait_for(client.run(), timeout=2.0)
+            assert fired == [True]
+
+    asyncio.run(_demo_reconfigured_fires_callback_and_breaks())
+    print("control.py: ok")

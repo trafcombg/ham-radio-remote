@@ -314,7 +314,13 @@ class MainWindow(QWidget):
                 label = f"{name}{port_suffix} — неактивно"
             else:
                 busy_by = self.session.radio_status(name)
-                label = name + port_suffix + (f" — заето от {busy_by}" if busy_by else " — свободно")
+                if busy_by:
+                    status = f"заето от {busy_by}"
+                elif self.session.external_cat_busy.get(name):
+                    status = "зает порт (CAT програма)"
+                else:
+                    status = "свободно"
+                label = f"{name}{port_suffix} — {status}"
             if item.text() != label:
                 item.setText(label)
 
