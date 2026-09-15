@@ -19,10 +19,15 @@
   #testResult { min-height: 1.2em; font-size: .85rem; margin-top: .5rem; }
   .row { display: flex; gap: .5rem; }
   .row > div { flex: 1; }
+  #updateBanner { display: none; background: #1e3a5f; border: 1px solid #3b82f6; border-radius: 6px; padding: .7rem 1rem; margin-bottom: 1rem; align-items: center; justify-content: space-between; gap: 1rem; }
 </style>
 </head>
 <body>
 <h1>HAM Radio Remote — Admin панел</h1>
+<div id="updateBanner">
+  <span id="updateText"></span>
+  <button id="updateApplyBtn">Инсталирай и рестартирай сървъра</button>
+</div>
 <button id="addBtn">+ Добави радио</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 <table id="radioTable">
@@ -482,12 +487,34 @@ async function deleteAmplifier(name) {
   loadAmplifiers();
 }
 
+async function checkForUpdate() {
+  const res = await api("/api/update");
+  const body = await res.json();
+  const banner = document.getElementById("updateBanner");
+  if (body.pending) {
+    document.getElementById("updateText").textContent =
+      `Налична е версия ${body.pending.version} (текуща ${body.current_version}) — изтеглена, готова за инсталиране.`;
+    banner.style.display = "flex";
+  } else {
+    banner.style.display = "none";
+  }
+}
+
+document.getElementById("updateApplyBtn").onclick = async () => {
+  if (!confirm("Сървърът ще спре, ще инсталира новата версия и трябва да го стартираш ръчно отново. Всички активни радио/аудио връзки ще прекъснат. Продължи?")) return;
+  await api("/api/update/apply", { method: "POST" });
+  document.getElementById("updateText").textContent = "Сървърът се обновява и спира — стартирай го ръчно, когато инсталацията приключи.";
+  document.getElementById("updateApplyBtn").disabled = true;
+};
+
 (async () => {
   const meRes = await fetch("/api/me");
   const me = await meRes.json();
   if (!me.user || !me.user.is_admin) { location.href = "/login"; return; }
   loadRadios();
   loadAmplifiers();
+  checkForUpdate();
+  setInterval(checkForUpdate, 5 * 60 * 1000);
 })();
 </script>
 </body>

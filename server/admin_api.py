@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from common.version import APP_VERSION
 from server.cat_bridge import probe_serial_port
 from server.db import PostgresDb
 from server.device_registry import (
@@ -196,6 +197,18 @@ async def logout(response: Response):
 @app.get("/api/me")
 async def me(request: Request):
     return {"user": current_user(request)}
+
+
+@app.get("/api/update")
+async def get_update_status(request: Request, admin=Depends(require_admin)):
+    return {"current_version": APP_VERSION, "pending": request.app.state.pending_update}
+
+
+@app.post("/api/update/apply")
+async def apply_update(request: Request, admin=Depends(require_admin)):
+    if not request.app.state.apply_update():
+        raise HTTPException(status_code=409, detail="няма изтеглена версия за инсталиране")
+    return {"ok": True}
 
 
 @app.get("/api/devices")

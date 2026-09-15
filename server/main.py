@@ -4,6 +4,8 @@ Packaged: HAM-Radio-Server.exe, with config.json next to it."""
 import asyncio
 import json
 import logging
+import os
+import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -32,9 +34,9 @@ def load_config():
 async def _update_check_loop():
     """Downloads a newer installer automatically when found, but never
     runs it — restarting a live CAT/audio/PTT server mid-session would
-    drop active connections. The operator double-clicks the downloaded
-    installer whenever it's convenient to apply it (it closes and
-    replaces this running server for them at that point)."""
+    drop active connections. Surfaced in the admin panel (GET /api/update)
+    as "нова версия налична" with a button that calls _apply_pending_update
+    below — the operator decides when it's convenient to apply it."""
     while True:
         update = await asyncio.to_thread(check_for_update, APP_VERSION, "Server-Setup")
         if update:
@@ -43,12 +45,30 @@ async def _update_check_loop():
                 try:
                     await asyncio.to_thread(urllib.request.urlretrieve, update["download_url"], dest)
                     log.warning(
-                        "нова версия %s изтеглена (текуща %s): %s — стартирай го ръчно когато е удобно",
+                        "нова версия %s изтеглена (текуща %s): %s — приложи от admin панела или го стартирай ръчно",
                         update["version"], APP_VERSION, dest,
                     )
                 except OSError:
                     log.exception("неуспешно сваляне на новата версия")
+                    await asyncio.sleep(UPDATE_CHECK_INTERVAL_S)
+                    continue
+            admin_app.state.pending_update = {"version": update["version"], "path": str(dest)}
         await asyncio.sleep(UPDATE_CHECK_INTERVAL_S)
+
+
+def _apply_pending_update() -> bool:
+    """Launches the already-downloaded installer silently and exits this
+    process shortly after — the installer's AppMutex handling (see
+    packaging/installer/server.iss) waits for us to close, then replaces
+    the files. The operator has to start the server again manually
+    afterward, same as every other server start (it's deliberately not
+    installed as a service — see server.iss)."""
+    update = admin_app.state.pending_update
+    if not update:
+        return False
+    subprocess.Popen([update["path"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"])
+    asyncio.get_event_loop().call_later(1.0, lambda: os._exit(0))
+    return True
 
 
 async def main():
@@ -61,6 +81,8 @@ async def main():
     amp_manager = AmplifierManager(db, manager)
     await amp_manager.load_all()
 
+    admin_app.state.pending_update = None
+    admin_app.state.apply_update = _apply_pending_update
     asyncio.create_task(_update_check_loop())
     asyncio.create_task(watch_devices(10.0))
 
