@@ -266,19 +266,23 @@ class RadioBridge:
     async def _handle_ptt(self, writer, username, on):
         if on:
             if self.amp_fault_check and self.amp_fault_check():
+                log.warning("PTT ON denied for %s on %s: amplifier fault", username, self.name)
                 await self._send(writer, {"type": "ptt_denied", "reason": "усилвателят докладва грешка/overtemp"})
                 return
             try:
                 self.arbiter.acquire(username)
             except PttDenied as e:
+                log.info("PTT ON denied for %s on %s: %s", username, self.name, e)
                 await self._send(writer, {"type": "ptt_denied", "reason": str(e)})
                 return
             self.ptt_method.set(True)
             session_id = self.session_ids.get(writer)
             self.tx_ids[writer] = await self.db.start_transmission(session_id) if session_id is not None else None
             await self._send(writer, {"type": "ptt_ack", "on": True})
+            log.info("PTT ON by %s on %s", username, self.name)
         else:
             if self.arbiter.holder != username:
+                log.info("PTT OFF from %s on %s ignored — holder is %s", username, self.name, self.arbiter.holder)
                 await self._send(writer, {"type": "ptt_ack", "on": False})
                 return
             self.arbiter.release(username)
@@ -287,6 +291,7 @@ class RadioBridge:
             if tx_id is not None:
                 await self.db.end_transmission(tx_id)
             await self._send(writer, {"type": "ptt_ack", "on": False})
+            log.info("PTT OFF by %s on %s", username, self.name)
         await self._broadcast_status()
 
     async def _release_if_holder(self, writer, username):
@@ -412,7 +417,36 @@ if __name__ == "__main__":
         other_bridge = RadioBridge({"name": "IC-746PRO"}, _FakeAuthDb())
         assert await other_bridge._authorize("ivan", "secret") is False  # right password, NOT permitted for this radio
 
+    class _FakeWriter:
+        def __init__(self):
+            self.sent = []
+
+        def write(self, data):
+            self.sent.append(data)
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            pass
+
+    async def _demo_ptt_release():
+        # Reproduces the report: hold PTT (on=True), release (on=False) —
+        # the radio must actually un-key, not just ack the release.
+        bridge = RadioBridge({"name": "TEST"}, NullDb())
+        bridge.ptt_method = _FakeKey()
+        writer = _FakeWriter()
+
+        await bridge._handle_ptt(writer, "ivan", True)
+        assert bridge.arbiter.holder == "ivan"
+        assert bridge.ptt_method.calls == [True], "radio never keyed on PTT-down"
+
+        await bridge._handle_ptt(writer, "ivan", False)
+        assert bridge.arbiter.holder is None, "arbiter never released on PTT-up"
+        assert bridge.ptt_method.calls == [True, False], "radio never un-keyed on PTT-up"
+
     _demo_lazy_keys()
     asyncio.run(_demo())
+    asyncio.run(_demo_ptt_release())
     asyncio.run(_demo_authorize())
     print("radio_bridge.py: ok")

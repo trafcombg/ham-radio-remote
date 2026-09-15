@@ -40,6 +40,29 @@ log = logging.getLogger("session")
 
 RADIOS_FETCH_TIMEOUT_S = 5
 AMPLIFIER_POLL_INTERVAL_S = 5
+CONTROL_RECONNECT_DELAY_S = 3.0
+
+
+async def _run_control_client_forever(client: ControlClient):
+    """ControlClient.run() returns (cleanly or via exception) the instant
+    the TCP connection drops for any reason — a server restart, a Wi-Fi
+    blip, anything — and nothing used to retry it. That silently killed
+    PTT/status for that radio until the operator manually switched away
+    and back: a "hold PTT, it transmits, release does nothing" report
+    turned out to be exactly this — the release never reached the server
+    because the connection was already gone by then. Keeps retrying until
+    the server explicitly denies our credentials/permission (denied=True),
+    which would just be hammered pointlessly otherwise."""
+    while True:
+        try:
+            await client.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("control connection to %s:%s lost — reconnecting in %.0fs", client.server_host, client.server_port, CONTROL_RECONNECT_DELAY_S, exc_info=True)
+        if client.denied:
+            return
+        await asyncio.sleep(CONTROL_RECONNECT_DELAY_S)
 
 
 class RadioSession:
@@ -51,6 +74,7 @@ class RadioSession:
         self.server_host = app_cfg["server_host"]
 
         self.status_clients: dict = {}  # radio name -> ControlClient, for the radio picker
+        self._status_tasks: dict = {}
         self.cat_relays: dict = {}      # radio name -> ComRelay, one per ACTIVE radio, always on
         self._cat_tasks: dict = {}
 
@@ -143,6 +167,9 @@ class RadioSession:
         return radios
 
     async def start_status_watchers(self):
+        for task in self._status_tasks.values():
+            task.cancel()
+        self._status_tasks = {}
         for client in self.status_clients.values():
             if client.writer:
                 client.writer.close()
@@ -152,7 +179,7 @@ class RadioSession:
                 continue
             client = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
             self.status_clients[radio_cfg["name"]] = client
-            asyncio.create_task(client.run())
+            self._status_tasks[radio_cfg["name"]] = asyncio.create_task(_run_control_client_forever(client))
 
     async def start_cat_relays(self, radios: list):
         active_names = {r["name"] for r in radios if r.get("active", True)}
@@ -203,7 +230,7 @@ class RadioSession:
         self.radio_name = radio_cfg["name"]
 
         self.control = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
-        self._tasks.append(asyncio.create_task(self.control.run()))
+        self._tasks.append(asyncio.create_task(_run_control_client_forever(self.control)))
 
         audio_cfg = self.app_cfg["audio"]
         # Per-radio device override (Settings) falls back to the global
@@ -314,6 +341,8 @@ class RadioSession:
             self._amp_poll_task.cancel()
         for task in self._cat_tasks.values():
             task.cancel()
+        for task in self._status_tasks.values():
+            task.cancel()
         for client in self.status_clients.values():
             if client.writer:
                 client.writer.close()
@@ -345,5 +374,32 @@ if __name__ == "__main__":
         assert task_b.cancelled
         assert "A" in session.cat_relays
 
+    async def _demo_reconnect():
+        # Reproduces the reported bug: the control connection drops (any
+        # reason — server restart, network blip) and PTT/status for that
+        # radio silently died forever because nothing reconnected it.
+        global CONTROL_RECONNECT_DELAY_S
+        CONTROL_RECONNECT_DELAY_S = 0.15  # self-check only — production stays 3s
+
+        hellos = []
+
+        async def handle(reader, writer):
+            line = await reader.readline()
+            hellos.append(json.loads(line))
+            await asyncio.sleep(0.05)
+            writer.close()  # simulate the connection dying right after hello
+
+        server = await asyncio.start_server(handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            client = ControlClient("ivan", "secret", "127.0.0.1", port)
+            task = asyncio.create_task(_run_control_client_forever(client))
+            await asyncio.sleep(0.4)  # long enough for at least 2 connect-drop-retry cycles
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        assert len(hellos) >= 2, f"expected the client to reconnect after the drop, got {len(hellos)} hello(s)"
+
     asyncio.run(_demo())
+    asyncio.run(_demo_reconnect())
     print("session.py: ok")
