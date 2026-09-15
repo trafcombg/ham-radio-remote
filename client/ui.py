@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -12,10 +13,13 @@ from PySide6.QtWidgets import (
 from client import credential_store
 from client.debug_dialog import DebugDialog
 from client.settings_dialog import SettingsDialog
-from common.updater import download_and_run_installer
+from common.app_paths import app_dir
+from common.updater import check_for_update, download_and_run_installer
 from common.version import APP_VERSION
 
 log = logging.getLogger("ui")
+
+LOG_PATH = app_dir(__file__) / "client.log"
 
 
 class MainWindow(QWidget):
@@ -75,6 +79,14 @@ class MainWindow(QWidget):
         self.debug_button = QPushButton("Debug настройки")
         self.debug_button.clicked.connect(self._open_debug_dialog)
 
+        self.log_button = QPushButton("Отвори лог файл")
+        self.log_button.clicked.connect(self._open_log_file)
+
+        self.check_update_button = QPushButton("Провери за ъпдейт")
+        self.check_update_button.clicked.connect(self._check_update_now)
+        self._checking_update = False
+        self._last_check_no_update = False
+
         self.update_button = QPushButton("Обнови")
         self.update_button.setStyleSheet("background: #f59e0b;")
         self.update_button.hide()
@@ -104,6 +116,8 @@ class MainWindow(QWidget):
         layout.addLayout(cw_row)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.debug_button)
+        layout.addWidget(self.log_button)
+        layout.addWidget(self.check_update_button)
         layout.addWidget(self.update_button)
         layout.addWidget(self.amp_section_label)
         layout.addWidget(self.amp_widget)
@@ -229,6 +243,30 @@ class MainWindow(QWidget):
             dialog.apply()
             log.info("debug logging updated")
 
+    def _open_log_file(self):
+        try:
+            subprocess.Popen([
+                "powershell.exe", "-NoExit", "-Command",
+                f"Get-Content -Path '{LOG_PATH}' -Wait -Tail 200",
+            ])
+        except OSError:
+            log.warning("не успях да отворя лог файла %s", LOG_PATH, exc_info=True)
+
+    def _check_update_now(self):
+        if self._checking_update:
+            return
+        self._checking_update = True
+        self.check_update_button.setEnabled(False)
+        self.check_update_button.setText("Проверка...")
+        asyncio.run_coroutine_threadsafe(self._check_update_now_async(), self.loop)
+
+    async def _check_update_now_async(self):
+        update = await asyncio.to_thread(check_for_update, APP_VERSION, "Client-Setup")
+        if self.update_state:
+            self.update_state.available = update
+        self._last_check_no_update = update is None
+        self._checking_update = False
+
     def _apply_update(self):
         update = self.update_state.available
         if not update:
@@ -255,6 +293,10 @@ class MainWindow(QWidget):
         if self.update_state and self.update_state.available and not self.update_button.isVisible():
             self.update_button.setText(f"Налична версия {self.update_state.available['version']} — Обнови")
             self.update_button.show()
+
+        if not self._checking_update and not self.check_update_button.isEnabled():
+            self.check_update_button.setEnabled(True)
+            self.check_update_button.setText("Няма нова версия" if self._last_check_no_update else "Провери за ъпдейт")
 
         for i in range(self.radio_list.count()):
             item = self.radio_list.item(i)
