@@ -6,9 +6,28 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QSpinBox,
 )
 
+from client.audio_devices import list_input_devices, list_output_devices
+
+DEFAULT_DEVICE_LABEL = "(по подразбиране)"
+
+
+def _device_combo(devices: list, current) -> QComboBox:
+    combo = QComboBox()
+    combo.addItem(DEFAULT_DEVICE_LABEL, None)
+    for idx, name in devices:
+        combo.addItem(name, idx)
+    if current is not None:
+        i = combo.findData(current)
+        if i >= 0:
+            combo.setCurrentIndex(i)
+    return combo
+
 
 class SettingsDialog(QDialog):
-    def __init__(self, server_host: str, password: str, cw_cfg: dict, rc28_cfg: dict, com_ports: dict, active_radios: list, parent=None):
+    def __init__(
+        self, server_host: str, password: str, cw_cfg: dict, rc28_cfg: dict,
+        com_ports: dict, active_radios: list, radio_audio: dict, parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Настройки — сървър, CW и RC-28")
 
@@ -53,11 +72,27 @@ class SettingsDialog(QDialog):
         form.addRow(self.rc28_enabled)
         form.addRow("RC-28 стъпка", self.rc28_step)
 
+        self._radio_audio_widgets = {}  # radio name -> (input_combo, output_combo)
         if active_radios:
-            form.addRow(QLabel("<b>Виртуални CAT COM портове (авт. назначени)</b>"))
+            input_devices = list_input_devices()
+            output_devices = list_output_devices()
+            form.addRow(QLabel("<b>Радиа — портове и аудио устройства</b>"))
             for radio_cfg in active_radios:
-                port = com_ports.get(radio_cfg["name"], {}).get("local", "— (ще се създаде при връзка)")
-                form.addRow(radio_cfg["name"], QLabel(port))
+                name = radio_cfg["name"]
+                com_port = com_ports.get(name, {}).get("local", "— (ще се създаде при връзка)")
+                civ = f" | CIV {radio_cfg['civ_address']}" if radio_cfg.get("civ_address") else ""
+                details = (
+                    f"COM {com_port} · CAT TCP :{radio_cfg.get('cat_port')} · Control :{radio_cfg.get('control_port')} · "
+                    f"Audio UDP :{radio_cfg.get('audio_port')} · CW UDP :{radio_cfg.get('cw_port')}{civ}"
+                )
+                form.addRow(f"<b>{name}</b>", QLabel(details))
+
+                current = radio_audio.get(name, {})
+                in_combo = _device_combo(input_devices, current.get("input_device"))
+                out_combo = _device_combo(output_devices, current.get("output_device"))
+                form.addRow("  Микрофон (вход, УДП → радио)", in_combo)
+                form.addRow("  Говорител (изход, УДП → тук)", out_combo)
+                self._radio_audio_widgets[name] = (in_combo, out_combo)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -83,3 +118,12 @@ class SettingsDialog(QDialog):
         cfg["enabled"] = self.rc28_enabled.isChecked()
         cfg["step_hz"] = self.rc28_step.value()
         return cfg
+
+    def result_radio_audio(self) -> dict:
+        """{radio_name: {"input_device": idx|None, "output_device": idx|None}}
+        — None means "use the global default device", same convention as
+        app_cfg["audio"]."""
+        return {
+            name: {"input_device": in_combo.currentData(), "output_device": out_combo.currentData()}
+            for name, (in_combo, out_combo) in self._radio_audio_widgets.items()
+        }

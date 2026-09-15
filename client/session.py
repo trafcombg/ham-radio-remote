@@ -60,6 +60,7 @@ class RadioSession:
         self.radio_name = None
         self.control = None
         self.audio = None
+        self.audio_error = None  # one-shot — set on AudioLink setup failure, ui.py shows+clears it
         self.cw_link = None
         self.text_cw = None
         self.iambic_keyer = None
@@ -205,15 +206,36 @@ class RadioSession:
         self._tasks.append(asyncio.create_task(self.control.run()))
 
         audio_cfg = self.app_cfg["audio"]
-        self.audio = AudioLink(
-            input_device=audio_cfg.get("input_device"),
-            output_device=audio_cfg.get("output_device"),
-            listen_port=audio_cfg["local_port"],
-            peer=(self.server_host, radio_cfg["audio_port"]),
-            mic_gain=audio_cfg.get("mic_gain", 1.0),
-            speaker_gain=audio_cfg.get("speaker_gain", 1.0),
-        )
-        self.audio.start()
+        # Per-radio device override (Settings) falls back to the global
+        # default — lets each radio route to a different physical
+        # mic/speaker (e.g. two radios, two USB sound cards).
+        radio_audio = self.app_cfg.get("radio_audio", {}).get(radio_cfg["name"], {})
+        input_device = radio_audio.get("input_device")
+        if input_device is None:
+            input_device = audio_cfg.get("input_device")
+        output_device = radio_audio.get("output_device")
+        if output_device is None:
+            output_device = audio_cfg.get("output_device")
+        try:
+            self.audio = AudioLink(
+                input_device=input_device,
+                output_device=output_device,
+                listen_port=audio_cfg["local_port"],
+                peer=(self.server_host, radio_cfg["audio_port"]),
+                mic_gain=audio_cfg.get("mic_gain", 1.0),
+                speaker_gain=audio_cfg.get("speaker_gain", 1.0),
+            )
+            self.audio.start()
+        except Exception as e:
+            # switch_to() runs via run_coroutine_threadsafe with nobody
+            # awaiting the future — an uncaught exception here used to
+            # vanish silently (CAT/control still connected, so the UI
+            # looked fine while audio just never worked). Surface it
+            # instead of raising, so the rest of the radio still works —
+            # ui.py's _tick() polls this and shows it once.
+            log.exception("audio setup failed for radio %s", self.radio_name)
+            self.audio = None
+            self.audio_error = f"Аудио неуспешно: {e}"
 
         cw_cfg = self.app_cfg["cw"]
         self.cw_link = CwLink(cw_cfg["local_port"], peer=(self.server_host, radio_cfg["cw_port"]), username=self.username)

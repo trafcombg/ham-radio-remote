@@ -47,24 +47,40 @@ class AudioLink:
         self._last_send_wait_log = 0.0
         self._last_recv_wait_log = 0.0
 
+        # Input and output are opened independently and degrade gracefully:
+        # a machine with no microphone (or no speakers) can still do the
+        # half that works — e.g. a listen-only test box with zero input
+        # devices, which previously made the WHOLE AudioLink raise and,
+        # since nothing awaited switch_to()'s future, failed completely
+        # silently. Only raise if neither side is usable.
         self._in_stream = None
+        self._out_stream = None
         try:
-            self._in_stream = sd.InputStream(
-                device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic,
-            )
-            self._out_stream = sd.OutputStream(
-                device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-                dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker,
-            )
+            try:
+                self._in_stream = sd.InputStream(
+                    device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic,
+                )
+            except Exception:
+                log.warning("no microphone/input device available (device=%r) — mic capture disabled", input_device, exc_info=True)
+            try:
+                self._out_stream = sd.OutputStream(
+                    device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                    dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker,
+                )
+            except Exception:
+                log.warning("no speaker/output device available (device=%r) — playback disabled", output_device, exc_info=True)
+            if self._in_stream is None and self._out_stream is None:
+                raise RuntimeError("нито едно аудио устройство (вход/изход) не е налично")
         except Exception:
-            # ponytail: ако output потокът гръмне след успешен input, или
-            # input потокът сам гръмне — недовършеният AudioLink никога не
-            # се присвоява на RadioBridge.audio, така че shutdown() не може
-            # да го затвори. Без това, сокетът/потокът остават заети и
+            # ponytail: недовършеният AudioLink никога не се присвоява на
+            # RadioBridge.audio/session.audio, така че shutdown() не може
+            # да го затвори — без това, сокетът/потокът остават заети и
             # следващият опит за старт гърми с "address already in use".
             if self._in_stream is not None:
                 self._in_stream.close()
+            if self._out_stream is not None:
+                self._out_stream.close()
             self.sock.close()
             raise
 
@@ -111,13 +127,20 @@ class AudioLink:
             outdata[n:] = 0
 
     def start(self):
-        self._in_stream.start()
-        self._out_stream.start()
-        log.info("audio link up on UDP :%s peer=%s", self.sock.getsockname()[1], self.peer)
+        if self._in_stream:
+            self._in_stream.start()
+        if self._out_stream:
+            self._out_stream.start()
+        log.info(
+            "audio link up on UDP :%s peer=%s (mic=%s, speaker=%s)",
+            self.sock.getsockname()[1], self.peer, self._in_stream is not None, self._out_stream is not None,
+        )
 
     def stop(self):
-        self._in_stream.stop()
-        self._out_stream.stop()
+        if self._in_stream:
+            self._in_stream.stop()
+        if self._out_stream:
+            self._out_stream.stop()
         self.sock.close()
 
 

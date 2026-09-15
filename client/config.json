@@ -11,6 +11,12 @@
       "internal": "COM21"
     }
   },
+  "radio_audio": {
+    "IC-7300": {
+      "input_device": null,
+      "output_device": null
+    }
+  },
   "audio": {
     "input_device": null,
     "output_device": null,
@@ -43,5 +49,5 @@
       "civ_address": 148
     }
   ],
-  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAD/JlY8LyI1DjLQ2Dq2IJHb4P2FFtkGBMNWPPr3kjXW3wAAAAAOgAAAAAIAACAAAAD/ow9Zw5aicpBEju2aVwQlgJ59Wcap9FYAFrdg9lYL2BAAAACjVlUvy5d/PmdeFcdf4RSTQAAAAColmmbvT6Pf5Vq1fBDi5FHHWux+DXw5rKafhRqzX1tXLoxsS1NhtW6lL6ZeC0wZIJDRAkUv6nki+DKwTHgtY+g="
+  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAABa/WHUpnw5RqRPZGZ9gPq5pzjBoI2TLK8xpuCtZboPowAAAAAOgAAAAAIAACAAAADUjO5X5uPQ1j8TXp/xOQ0QU4IlWKoEyXNLHnSusxCizxAAAAA3vv8fu+qzEDHCRI9q48aZQAAAAJmVvUBxAXcLFeKHqyl2ZZndqD6JEOkcTDBzvSLIBiSlDmr08u8uDgfkPihbaYwQpe5SBuEdtH8kOdrd1z8zfTo="
 }
