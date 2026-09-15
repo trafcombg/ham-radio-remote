@@ -14,7 +14,7 @@
 #define HasPostgresRedist FileExists("redist\postgresql-setup.exe")
 
 #define MyAppName "HAM Radio Remote Server"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "Your Callsign / Club"
 #define MyAppExeName "HAM-Radio-Server.exe"
 
