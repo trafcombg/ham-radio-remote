@@ -48,22 +48,34 @@ def scan_serial_devices() -> list[SerialDeviceInfo]:
 def scan_audio_devices() -> list[AudioDeviceInfo]:
     import sounddevice as sd
 
+    endpoint_ids = _wasapi_endpoint_ids()
     return [
-        AudioDeviceInfo(i, d["name"], _wasapi_endpoint_id(d["name"]))
+        AudioDeviceInfo(i, d["name"], endpoint_ids.get(d["name"]))
         for i, d in enumerate(sd.query_devices())
     ]
 
 
-def _wasapi_endpoint_id(name: str) -> str | None:
+def _wasapi_endpoint_ids() -> dict:
+    """name -> WASAPI endpoint id, for every device pycaw can see. Queried
+    once per scan, not once per device: pycaw's own GetAllDevices() prints
+    a UserWarning per endpoint it can't fully query (common for disabled
+    or disconnected devices Windows still lists) — calling it once instead
+    of per-device avoids both repeating that noise N times per scan and
+    N redundant COM enumerations. The warning itself is harmless (this
+    function degrades to skipping that device's endpoint id) so it's
+    suppressed rather than left to spam the console."""
     try:
+        import warnings
+
         from pycaw.pycaw import AudioUtilities
 
-        for dev in AudioUtilities.GetAllDevices():
-            if dev.FriendlyName == name:
-                return dev.id
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            devices = AudioUtilities.GetAllDevices()
+        return {dev.FriendlyName: dev.id for dev in devices}
     except Exception:
-        log.debug("WASAPI endpoint id lookup unavailable for %r", name, exc_info=True)
-    return None
+        log.debug("WASAPI endpoint id lookup unavailable", exc_info=True)
+        return {}
 
 
 def resolve_serial_port(devices, *, vid=None, pid=None, serial_number=None, location=None) -> str:
