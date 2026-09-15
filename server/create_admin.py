@@ -5,8 +5,8 @@ python -m server.create_admin <username> <password>
 import asyncio
 import json
 import sys
-from pathlib import Path
 
+from common.app_paths import app_dir
 from server.db import PostgresDb
 
 
@@ -16,7 +16,7 @@ async def main():
         raise SystemExit(1)
     username, password = sys.argv[1], sys.argv[2]
 
-    cfg = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+    cfg = json.loads((app_dir(__file__) / "config.json").read_text(encoding="utf-8"))
     dsn = (cfg.get("db") or {}).get("dsn")
     if not dsn:
         print("server/config.json: db.dsn не е зададен")

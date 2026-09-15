@@ -9,15 +9,17 @@ from PySide6.QtWidgets import (
 )
 
 from client.settings_dialog import SettingsDialog
+from common.updater import download_and_run_installer
 
 
 class MainWindow(QWidget):
-    def __init__(self, session, loop, app_cfg: dict, config_path: Path):
+    def __init__(self, session, loop, app_cfg: dict, config_path: Path, update_state=None):
         super().__init__()
         self.session = session
         self.loop = loop
         self.app_cfg = app_cfg
         self.config_path = config_path
+        self.update_state = update_state
 
         self.setWindowTitle(f"HAM Radio Remote — {app_cfg['username']}")
 
@@ -44,6 +46,11 @@ class MainWindow(QWidget):
 
         self.settings_button = QPushButton("Настройки")
 
+        self.update_button = QPushButton("Обнови")
+        self.update_button.setStyleSheet("background: #f59e0b;")
+        self.update_button.hide()
+        self.update_button.clicked.connect(self._apply_update)
+
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Радиа"))
         layout.addWidget(self.radio_list)
@@ -56,6 +63,7 @@ class MainWindow(QWidget):
         cw_row.addWidget(self.cw_send_button)
         layout.addLayout(cw_row)
         layout.addWidget(self.settings_button)
+        layout.addWidget(self.update_button)
 
         self.ptt_button.pressed.connect(lambda: self._send_ptt(True))
         self.ptt_button.released.connect(lambda: self._send_ptt(False))
@@ -102,7 +110,23 @@ class MainWindow(QWidget):
             if current:
                 self._switch_radio(current.data(1000))
 
+    def _apply_update(self):
+        update = self.update_state.available
+        if not update:
+            return
+        self.update_button.setEnabled(False)
+        self.update_button.setText("Обновяване...")
+        if download_and_run_installer(update["download_url"]):
+            self.close()
+        else:
+            self.update_button.setEnabled(True)
+            self.update_button.setText("Обнови (грешка, опитай пак)")
+
     def _tick(self):
+        if self.update_state and self.update_state.available and not self.update_button.isVisible():
+            self.update_button.setText(f"Налична версия {self.update_state.available['version']} — Обнови")
+            self.update_button.show()
+
         for i in range(self.radio_list.count()):
             item = self.radio_list.item(i)
             radio_cfg = item.data(1000)

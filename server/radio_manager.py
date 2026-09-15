@@ -5,8 +5,8 @@ import asyncio
 import contextlib
 import json
 import logging
-from pathlib import Path
 
+from common.app_paths import app_dir
 from server.db import PostgresDb
 from server.device_registry import (
     AmbiguousDeviceError,
@@ -45,7 +45,7 @@ def resolve_radio_devices(radio_cfg, serial_devices, audio_devices):
 
 
 def _load_json_radios():
-    path = Path(__file__).with_name("config.json")
+    path = app_dir(__file__) / "config.json"
     return json.loads(path.read_text(encoding="utf-8")).get("radios", [])
 
 

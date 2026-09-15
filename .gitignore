@@ -3,3 +3,9 @@ __pycache__/
 .venv/
 venv/
 .idea/
+
+# PyInstaller / Inno Setup build output — rebuild from packaging/*.spec and packaging/installer/*.iss
+/build/
+/dist/
+/dist_installers/
+packaging/installer/redist/*.exe

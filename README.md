@@ -1,4 +1,4 @@
-# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3 + Фаза 4 + Фаза 5 + Фаза 6
+# HAM Radio Remote — Фаза 1 + Фаза 2 + Фаза 3 + Фаза 4 + Фаза 5 + Фаза 6 + Фаза 7
 
 Клиент-сървър дистанционно управление на Icom радиостанции: CAT bridge
 (виртуален COM порт → мрежа → реален CAT сериен порт) + двупосочно аудио
@@ -10,6 +10,27 @@ decode (потвърдено с два независими ctypes wrapper-а �
 decode винаги връща тишина). Засега аудиото е uncompressed PCM вместо
 Opus — за LAN честотната лента не е проблем (~768kbps mono/48kHz), а и
 latency-то е по-ниско без encode/decode. Виж `common/audio_io.py`.
+
+## Какво добавя Фаза 7 към Фаза 6
+
+Пакетиране в самостоятелни `.exe` + инсталатори + auto-update. Пълни
+детайли, build инструкции и какво реално е тествано: [packaging/README.md](packaging/README.md).
+
+- `packaging/server.spec` / `packaging/client.spec` — PyInstaller. **Реално
+  build-нах и двата тук** — сървърният .exe действително обслужва admin
+  панела (curl-нах го), клиентският .exe реално стартира Qt+asyncio.
+- `packaging/installer/server.iss` / `client.iss` — Inno Setup. **Реално
+  компилирах и двата** (инсталирах Inno Setup 6 за целта) в работещи
+  `.exe` инсталатори — не съм ги пускал (admin elevation + системни
+  промени). Клиентът: silent com0com install + desktop/start menu
+  shortcuts, без auto-start. Сървърът: опционален silent PostgreSQL
+  install, деинсталацията пита дали да запази PostgreSQL/логовете.
+- `common/updater.py` + `common/version.py` — проверка на GitHub
+  releases; клиентът предлага едно-кликово "Обнови" в UI, сървърът
+  сваля автоматично но не се саморестартира (рисково посред сесия) —
+  операторът пуска сваления инсталатор ръчно.
+- `common/app_paths.py` — `config.json` се чете от папката на .exe-то
+  когато е frozen, не отвътре в bundle-а.
 
 ## Какво добавя Фаза 6 към Фаза 5
 
@@ -246,4 +267,5 @@ python -m common.morse
 python -m common.acom_protocol
 python -m client.cw.iambic
 python -m client.rc28
+python -m common.updater
 ```
