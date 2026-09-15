@@ -39,23 +39,19 @@ BAND_NAMES = [
     "17m", "15m", "12m", "10m", "6m", "4m", "?m", "?m", "?m", "?m",
 ]
 
-MODEL_SPECS = {
-    "500S": {"temp_offset": 282, "nominal_fwd": 500, "max_fwd": 600, "nominal_rev": 99, "max_rev": 130},
-    "600S": {"temp_offset": 273, "nominal_fwd": 600, "max_fwd": 700, "nominal_rev": 114, "max_rev": 150},
-    "700S": {"temp_offset": 282, "nominal_fwd": 700, "max_fwd": 800, "nominal_rev": 129, "max_rev": 170},
-    "1200S": {"temp_offset": 281, "nominal_fwd": 1200, "max_fwd": 1400, "nominal_rev": 228, "max_rev": 300},
-    "2020S": {"temp_offset": 282, "nominal_fwd": 1800, "max_fwd": 2000, "nominal_rev": 228, "max_rev": 300},
-}
+# Only the temperature offset is actually used (decode_telemetry below);
+# add nominal/max power fields back here if a UI ever needs them for scaling.
+MODEL_TEMP_OFFSET = {"500S": 282, "600S": 273, "700S": 282, "1200S": 281, "2020S": 282}
 
 
 def decode_telemetry(frame: bytes, model: str = "1200S") -> dict:
     """frame must be exactly MSG_LEN bytes with a valid checksum (see
     TelemetryParser, which only ever calls this on validated frames)."""
-    spec = MODEL_SPECS[model]
+    temp_offset = MODEL_TEMP_OFFSET[model]
     status_code = (frame[3] & 0xF0) >> 4
     return {
         "status": STATUS_NAMES.get(status_code, "unknown"),
-        "temp_c": frame[16] + frame[17] * 256 - spec["temp_offset"],
+        "temp_c": frame[16] + frame[17] * 256 - temp_offset,
         "fan": (frame[69] & 0xF0) >> 4,
         "band": BAND_NAMES[frame[69] & 0x0F],
         "drive_power_w": (frame[20] + frame[21] * 256) / 10.0,

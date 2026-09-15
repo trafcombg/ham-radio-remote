@@ -6,7 +6,6 @@ through the same PTT lock used for voice (see server/radio_bridge.py)."""
 import json
 import logging
 import socket
-import time
 
 log = logging.getLogger("cw_link")
 
@@ -22,7 +21,7 @@ class CwLink:
     def send_key(self, on: bool):
         if not self.peer:
             return
-        msg = json.dumps({"user": self.username, "on": on, "t": time.monotonic()}).encode()
+        msg = json.dumps({"user": self.username, "on": on}).encode()
         try:
             self.sock.sendto(msg, self.peer)
         except OSError:

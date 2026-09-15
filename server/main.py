@@ -16,6 +16,7 @@ from common.version import APP_VERSION
 from server.admin_api import app as admin_app
 from server.amplifier_manager import AmplifierManager
 from server.db import build_db
+from server.device_registry import watch_devices
 from server.radio_manager import RadioManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -61,6 +62,7 @@ async def main():
     await amp_manager.load_all()
 
     asyncio.create_task(_update_check_loop())
+    asyncio.create_task(watch_devices(10.0))
 
     web_cfg = cfg.get("web", {})
     host, port = web_cfg.get("host", "0.0.0.0"), web_cfg.get("port", 8080)

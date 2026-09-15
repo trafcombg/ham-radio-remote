@@ -96,9 +96,6 @@ class NullDb:
     async def list_radio_configs(self):
         return []
 
-    async def get_radio_config(self, name):
-        return None
-
     async def upsert_radio_config(self, cfg):
         raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази радиа")
 
@@ -201,11 +198,6 @@ class PostgresDb:
         async with self.pool.acquire() as c:
             rows = await c.fetch("SELECT * FROM radio_configs ORDER BY name")
         return [_row_to_radio_cfg(r) for r in rows]
-
-    async def get_radio_config(self, name):
-        async with self.pool.acquire() as c:
-            row = await c.fetchrow("SELECT * FROM radio_configs WHERE name = $1", name)
-        return _row_to_radio_cfg(row) if row else None
 
     async def upsert_radio_config(self, cfg: dict):
         r = _radio_cfg_to_row(cfg)

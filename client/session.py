@@ -23,7 +23,6 @@ from client.com_relay import ComRelay
 from client.control import ControlClient
 from client.cw.iambic import IambicKeyer
 from client.cw.serial_paddle import SerialPaddle
-from client.cw.straight_key import StraightKeySource
 from client.cw.text_source import TextCwSource
 from client.cw.winkeyer import WinkeyerSource
 from client.rc28 import Rc28Driver
@@ -46,7 +45,6 @@ class RadioSession:
         self.control = None
         self.audio = None
         self.cw_link = None
-        self.straight_key = None
         self.text_cw = None
         self.iambic_keyer = None
         self.paddle = None
@@ -85,7 +83,6 @@ class RadioSession:
 
         cw_cfg = self.app_cfg["cw"]
         self.cw_link = CwLink(cw_cfg["local_port"], peer=(self.server_host, radio_cfg["cw_port"]), username=self.username)
-        self.straight_key = StraightKeySource(self.cw_link.send_key)
         self.text_cw = TextCwSource(cw_cfg["wpm"], self.cw_link.send_key)
 
         source = cw_cfg.get("source", "straight")

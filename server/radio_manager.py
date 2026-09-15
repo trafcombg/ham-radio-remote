@@ -1,12 +1,11 @@
 """Starts/stops/reloads individual radio bridges at runtime — the admin
 panel's "apply without restarting the server" requirement."""
 
-import asyncio
-import contextlib
 import json
 import logging
 
 from common.app_paths import app_dir
+from server.bridge_manager import BridgeManager
 from server.db import PostgresDb
 from server.device_registry import (
     AmbiguousDeviceError,
@@ -49,11 +48,13 @@ def _load_json_radios():
     return json.loads(path.read_text(encoding="utf-8")).get("radios", [])
 
 
-class RadioManager:
+class RadioManager(BridgeManager):
+    log_name = "radio"
+    log = log
+
     def __init__(self, db):
+        super().__init__()
         self.db = db
-        self.bridges: dict[str, RadioBridge] = {}
-        self.tasks: dict[str, asyncio.Task] = {}
 
     async def load_all(self):
         configs = await self.db.list_radio_configs()
@@ -82,35 +83,15 @@ class RadioManager:
             log.error("cannot start radio %s: %s", cfg["name"], e)
             return False
         bridge = RadioBridge(cfg, self.db)
-        self.bridges[cfg["name"]] = bridge
-        task = asyncio.create_task(bridge.start(), name=f"radio:{cfg['name']}")
-        task.add_done_callback(self._log_task_result)
-        self.tasks[cfg["name"]] = task
+        self._track(cfg["name"], bridge, bridge.start())
         return True
-
-    def _log_task_result(self, task: asyncio.Task):
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc:
-            log.error("radio task %s failed: %s", task.get_name(), exc, exc_info=exc)
-
-    async def stop_radio(self, name: str):
-        bridge = self.bridges.pop(name, None)
-        if bridge:
-            await bridge.shutdown()
-        task = self.tasks.pop(name, None)
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
 
     async def reload_radio(self, cfg: dict, force: bool = False):
         name = cfg["name"]
         existing = self.bridges.get(name)
         if existing and existing.arbiter.holder is not None and not force:
             raise RadioBusyError(existing.arbiter.holder)
-        await self.stop_radio(name)
+        await self.stop(name)
         if isinstance(self.db, PostgresDb):
             await self.db.upsert_radio_config(cfg)
         if not await self._start_radio(cfg):
@@ -120,7 +101,7 @@ class RadioManager:
         existing = self.bridges.get(name)
         if existing and existing.arbiter.holder is not None and not force:
             raise RadioBusyError(existing.arbiter.holder)
-        await self.stop_radio(name)
+        await self.stop(name)
         if isinstance(self.db, PostgresDb):
             await self.db.delete_radio_config(name)
 

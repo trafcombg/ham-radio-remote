@@ -1,11 +1,10 @@
 """Starts/stops/reloads amplifier bridges, and wires CAT mirror + PTT
 safety lockout to a linked radio when the admin panel configures one."""
 
-import asyncio
-import contextlib
 import logging
 
 from server.amplifier_bridge import AmplifierBridge
+from server.bridge_manager import BridgeManager
 from server.db import PostgresDb
 from server.ebox_transport import HttpEboxTransport, RawTcpAcomTransport, SerialAcomTransport
 
@@ -23,12 +22,14 @@ def build_transport(cfg: dict):
     raise ValueError(f"unknown amplifier transport: {kind}")
 
 
-class AmplifierManager:
+class AmplifierManager(BridgeManager):
+    log_name = "amp"
+    log = log
+
     def __init__(self, db, radio_manager):
+        super().__init__()
         self.db = db
         self.radio_manager = radio_manager  # to wire linked_radio -> RadioBridge
-        self.bridges: dict[str, AmplifierBridge] = {}
-        self.tasks: dict[str, asyncio.Task] = {}
 
     async def load_all(self):
         for cfg in await self.db.list_amplifier_configs():
@@ -36,10 +37,7 @@ class AmplifierManager:
 
     async def _start(self, cfg: dict):
         bridge = AmplifierBridge(cfg, build_transport(cfg), self.db)
-        self.bridges[cfg["name"]] = bridge
-        task = asyncio.create_task(bridge.start(), name=f"amp:{cfg['name']}")
-        task.add_done_callback(self._log_task_result)
-        self.tasks[cfg["name"]] = task
+        self._track(cfg["name"], bridge, bridge.start())
 
         linked = cfg.get("linked_radio")
         if linked:
@@ -49,23 +47,6 @@ class AmplifierManager:
                 radio_bridge.amp_fault_check = lambda b=bridge: b.fault
             else:
                 log.warning("amplifier %s linked to unknown/not-yet-started radio %s", cfg["name"], linked)
-
-    def _log_task_result(self, task: asyncio.Task):
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc:
-            log.error("amplifier task %s failed: %s", task.get_name(), exc, exc_info=exc)
-
-    async def stop(self, name: str):
-        bridge = self.bridges.pop(name, None)
-        if bridge:
-            await bridge.shutdown()
-        task = self.tasks.pop(name, None)
-        if task:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
 
     async def reload(self, cfg: dict):
         await self.stop(cfg["name"])

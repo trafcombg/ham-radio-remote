@@ -92,8 +92,8 @@ class MainWindow(QWidget):
             asyncio.run_coroutine_threadsafe(self.session.control.request_ptt(on), self.loop)
 
     def _cw_key_press(self, on: bool):
-        if self.session.straight_key:
-            self.session.straight_key.press() if on else self.session.straight_key.release()
+        if self.session.cw_link:
+            self.session.cw_link.send_key(on)
 
     def _send_cw_text(self):
         text = self.cw_text_input.text().strip()

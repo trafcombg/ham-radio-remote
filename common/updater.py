@@ -46,7 +46,7 @@ def check_for_update(current_version: str, asset_name_contains: str, timeout: fl
         return None
 
 
-def download_and_run_installer(download_url: str, timeout: float = 60.0) -> bool:
+def download_and_run_installer(download_url: str) -> bool:
     """Downloads the new installer to a temp file and launches it in
     silent/unattended mode. Call this right before your own app exits —
     the installer's AppMutex handling takes care of waiting for it."""
