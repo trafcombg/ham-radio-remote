@@ -1,0 +1,4 @@
+pyserial-asyncio
+sounddevice
+numpy
+PyOgg

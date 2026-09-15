@@ -1,0 +1,13 @@
+{
+  "cat": {
+    "serial_port": "COM5",
+    "baud": 19200,
+    "tcp_host": "0.0.0.0",
+    "tcp_port": 4532
+  },
+  "audio": {
+    "input_device": null,
+    "output_device": null,
+    "udp_port": 5004
+  }
+}

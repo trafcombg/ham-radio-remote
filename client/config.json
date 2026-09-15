@@ -1,0 +1,16 @@
+{
+  "com": {
+    "local_port": "COM11",
+    "baud": 19200,
+    "server_host": "127.0.0.1",
+    "server_port": 4532
+  },
+  "audio": {
+    "input_device": null,
+    "output_device": null,
+    "server_host": "127.0.0.1",
+    "server_port": 5004,
+    "local_port": 5005
+  },
+  "civ_address": 148
+}
