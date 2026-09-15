@@ -78,8 +78,10 @@ class RadioCatConfig(BaseModel):
 
 
 class RadioAudioConfig(BaseModel):
-    name_contains: str | None = None
-    endpoint_id: str | None = None
+    input_name_contains: str | None = None
+    input_endpoint_id: str | None = None
+    output_name_contains: str | None = None
+    output_endpoint_id: str | None = None
     udp_port: int
     input_gain: float = 1.0
     output_gain: float = 1.0
@@ -201,6 +203,12 @@ async def me(request: Request):
 
 @app.get("/api/update")
 async def get_update_status(request: Request, admin=Depends(require_admin)):
+    return {"current_version": APP_VERSION, "pending": request.app.state.pending_update}
+
+
+@app.post("/api/update/check")
+async def check_update_now(request: Request, admin=Depends(require_admin)):
+    await request.app.state.check_for_update_now()
     return {"current_version": APP_VERSION, "pending": request.app.state.pending_update}
 
 

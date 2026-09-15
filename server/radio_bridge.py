@@ -169,7 +169,10 @@ class RadioBridge:
             port = key_cfg.get("serial_port")
             if port and port != self.cfg["cat"]["serial_port"]:
                 if port not in self._extra_serials:
-                    self._extra_serials[port] = serial.Serial(port, key_cfg.get("baud", self.cfg["cat"]["baud"]))
+                    conn = serial.Serial(port, key_cfg.get("baud", self.cfg["cat"]["baud"]))
+                    conn.rts = False
+                    conn.dtr = False
+                    self._extra_serials[port] = conn
                 conn = self._extra_serials[port]
             else:
                 conn = self.serial_proto.transport.serial  # reuse the CAT connection's line

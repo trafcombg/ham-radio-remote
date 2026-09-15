@@ -34,12 +34,14 @@ def resolve_radio_devices(radio_cfg, serial_devices, audio_devices):
             serial_number=cat.get("serial_number"), location=cat.get("location"),
         )
     audio = radio_cfg["audio"]
-    if audio.get("name_contains") or audio.get("endpoint_id"):
-        idx = resolve_audio_device(
-            audio_devices, endpoint_id=audio.get("endpoint_id"), name_contains=audio.get("name_contains")
+    if audio.get("input_name_contains") or audio.get("input_endpoint_id"):
+        audio["input_device"] = resolve_audio_device(
+            audio_devices, endpoint_id=audio.get("input_endpoint_id"), name_contains=audio.get("input_name_contains")
         )
-        audio["input_device"] = idx
-        audio["output_device"] = idx
+    if audio.get("output_name_contains") or audio.get("output_endpoint_id"):
+        audio["output_device"] = resolve_audio_device(
+            audio_devices, endpoint_id=audio.get("output_endpoint_id"), name_contains=audio.get("output_name_contains")
+        )
     return radio_cfg
 
 

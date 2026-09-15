@@ -40,14 +40,26 @@ class AudioLink:
         self.sock.setblocking(False)
         self.sock.bind(("0.0.0.0", listen_port))
 
-        self._in_stream = sd.InputStream(
-            device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-            dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic,
-        )
-        self._out_stream = sd.OutputStream(
-            device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
-            dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker,
-        )
+        self._in_stream = None
+        try:
+            self._in_stream = sd.InputStream(
+                device=input_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_mic,
+            )
+            self._out_stream = sd.OutputStream(
+                device=output_device, samplerate=SAMPLE_RATE, channels=CHANNELS,
+                dtype="int16", blocksize=FRAME_SAMPLES, callback=self._on_speaker,
+            )
+        except Exception:
+            # ponytail: ако output потокът гръмне след успешен input, или
+            # input потокът сам гръмне — недовършеният AudioLink никога не
+            # се присвоява на RadioBridge.audio, така че shutdown() не може
+            # да го затвори. Без това, сокетът/потокът остават заети и
+            # следващият опит за старт гърми с "address already in use".
+            if self._in_stream is not None:
+                self._in_stream.close()
+            self.sock.close()
+            raise
 
     def _on_mic(self, indata, frames, time_info, status):
         if status:

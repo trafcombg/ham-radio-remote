@@ -32,7 +32,12 @@ class SerialRelay(asyncio.Protocol):
 
 async def open_serial(serial_port: str, baud: int) -> SerialRelay:
     loop = asyncio.get_running_loop()
-    _, proto = await serial_asyncio.create_serial_connection(loop, SerialRelay, serial_port, baudrate=baud)
+    transport, proto = await serial_asyncio.create_serial_connection(loop, SerialRelay, serial_port, baudrate=baud)
+    # ponytail: pyserial/Windows assert RTS+DTR high the instant the port
+    # opens — for an RTS/DTR-keyed PTT interface that keys the transmitter
+    # on every radio add/reload unless cleared right here.
+    transport.serial.rts = False
+    transport.serial.dtr = False
     return proto
 
 
@@ -78,6 +83,8 @@ async def probe_serial_port(port: str, baud: int, timeout: float = 1.0) -> bool:
                 fut.set_result(True)
 
     transport, _ = await serial_asyncio.create_serial_connection(loop, ProbeProtocol, port, baudrate=baud)
+    transport.serial.rts = False
+    transport.serial.dtr = False
     try:
         return await asyncio.wait_for(fut, timeout)
     except asyncio.TimeoutError:

@@ -31,28 +31,34 @@ def load_config():
     return json.loads((app_dir(__file__) / "config.json").read_text(encoding="utf-8"))
 
 
+async def _check_for_update_once():
+    """One update check + download; shared by the periodic loop below and
+    the admin panel's manual "Провери за ъпдейт" button. Downloads a newer
+    installer automatically when found, but never runs it — restarting a
+    live CAT/audio/PTT server mid-session would drop active connections.
+    Surfaced in the admin panel (GET /api/update) as "нова версия налична"
+    with a button that calls _apply_pending_update below — the operator
+    decides when it's convenient to apply it."""
+    update = await asyncio.to_thread(check_for_update, APP_VERSION, "Server-Setup")
+    if not update:
+        return
+    dest = Path(tempfile.gettempdir()) / f"HAM-Radio-Server-Setup-{update['version']}.exe"
+    if not dest.exists():
+        try:
+            await asyncio.to_thread(urllib.request.urlretrieve, update["download_url"], dest)
+            log.warning(
+                "нова версия %s изтеглена (текуща %s): %s — приложи от admin панела или го стартирай ръчно",
+                update["version"], APP_VERSION, dest,
+            )
+        except OSError:
+            log.exception("неуспешно сваляне на новата версия")
+            return
+    admin_app.state.pending_update = {"version": update["version"], "path": str(dest)}
+
+
 async def _update_check_loop():
-    """Downloads a newer installer automatically when found, but never
-    runs it — restarting a live CAT/audio/PTT server mid-session would
-    drop active connections. Surfaced in the admin panel (GET /api/update)
-    as "нова версия налична" with a button that calls _apply_pending_update
-    below — the operator decides when it's convenient to apply it."""
     while True:
-        update = await asyncio.to_thread(check_for_update, APP_VERSION, "Server-Setup")
-        if update:
-            dest = Path(tempfile.gettempdir()) / f"HAM-Radio-Server-Setup-{update['version']}.exe"
-            if not dest.exists():
-                try:
-                    await asyncio.to_thread(urllib.request.urlretrieve, update["download_url"], dest)
-                    log.warning(
-                        "нова версия %s изтеглена (текуща %s): %s — приложи от admin панела или го стартирай ръчно",
-                        update["version"], APP_VERSION, dest,
-                    )
-                except OSError:
-                    log.exception("неуспешно сваляне на новата версия")
-                    await asyncio.sleep(UPDATE_CHECK_INTERVAL_S)
-                    continue
-            admin_app.state.pending_update = {"version": update["version"], "path": str(dest)}
+        await _check_for_update_once()
         await asyncio.sleep(UPDATE_CHECK_INTERVAL_S)
 
 
@@ -83,6 +89,7 @@ async def main():
 
     admin_app.state.pending_update = None
     admin_app.state.apply_update = _apply_pending_update
+    admin_app.state.check_for_update_now = _check_for_update_once
     asyncio.create_task(_update_check_loop())
     asyncio.create_task(watch_devices(10.0))
 

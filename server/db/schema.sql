@@ -49,8 +49,10 @@ CREATE TABLE IF NOT EXISTS radio_configs (
     cat_baud INTEGER NOT NULL DEFAULT 19200,
     cat_tcp_port INTEGER NOT NULL,
     control_port INTEGER NOT NULL,
-    audio_name_contains TEXT,
-    audio_endpoint_id TEXT,
+    audio_input_name_contains TEXT,
+    audio_input_endpoint_id TEXT,
+    audio_output_name_contains TEXT,
+    audio_output_endpoint_id TEXT,
     audio_udp_port INTEGER NOT NULL,
     audio_input_gain REAL NOT NULL DEFAULT 1.0,
     audio_output_gain REAL NOT NULL DEFAULT 1.0,
@@ -95,3 +97,27 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
 -- a no-op on a fresh database (the CREATE TABLE above already has them).
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_gain REAL NOT NULL DEFAULT 1.0;
+
+-- Migration: split the single audio device into independent input/output
+-- devices — mic and speakers are different Windows endpoints even on the
+-- same USB codec, so one shared endpoint_id could never open both streams.
+-- Guarded on the old columns still existing, so it's a no-op after the
+-- first run (they're dropped at the end of this block).
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'radio_configs' AND column_name = 'audio_name_contains'
+    ) THEN
+        ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_name_contains TEXT;
+        ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_endpoint_id TEXT;
+        ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_name_contains TEXT;
+        ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_endpoint_id TEXT;
+        UPDATE radio_configs SET
+            audio_input_name_contains = audio_name_contains,
+            audio_input_endpoint_id = audio_endpoint_id
+        WHERE audio_input_name_contains IS NULL;
+        ALTER TABLE radio_configs DROP COLUMN audio_name_contains;
+        ALTER TABLE radio_configs DROP COLUMN audio_endpoint_id;
+    END IF;
+END $$;

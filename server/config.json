@@ -22,8 +22,10 @@
       },
       "control_port": 4632,
       "audio": {
-        "name_contains": null,
-        "endpoint_id": null,
+        "input_name_contains": null,
+        "input_endpoint_id": null,
+        "output_name_contains": null,
+        "output_endpoint_id": null,
         "udp_port": 5004
       },
       "cw_udp_port": 5104,
@@ -48,8 +50,10 @@
       },
       "control_port": 4633,
       "audio": {
-        "name_contains": null,
-        "endpoint_id": null,
+        "input_name_contains": null,
+        "input_endpoint_id": null,
+        "output_name_contains": null,
+        "output_endpoint_id": null,
         "udp_port": 5006
       },
       "cw_udp_port": 5106,

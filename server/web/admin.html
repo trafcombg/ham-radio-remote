@@ -29,6 +29,7 @@
   <button id="updateApplyBtn">Инсталирай и рестартирай сървъра</button>
 </div>
 <button id="addBtn">+ Добави радио</button>
+<button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 <table id="radioTable">
   <thead><tr><th>Име</th><th>Модел</th><th>CAT</th><th>PTT</th><th>Статус</th><th></th></tr></thead>
@@ -57,11 +58,16 @@
       <div><label>CAT TCP порт<input name="tcp_port" type="number" required></label></div>
       <div><label>Control порт<input name="control_port" type="number" required></label></div>
     </div>
-    <label>Открито аудио устройство
-      <select id="audioDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
+    <label>Открито аудио устройство (вход/микрофон)
+      <select id="audioInputDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
     </label>
-    <label>Аудио устройство (име съдържа)<input name="audio_name_contains" placeholder="напр. USB Audio CODEC"></label>
-    <input type="hidden" name="audio_endpoint_id">
+    <label>Вход (микрофон, име съдържа)<input name="audio_input_name_contains" placeholder="напр. Microphone"></label>
+    <input type="hidden" name="audio_input_endpoint_id">
+    <label>Открито аудио устройство (изход/говорител)
+      <select id="audioOutputDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
+    </label>
+    <label>Изход (говорител, име съдържа)<input name="audio_output_name_contains" placeholder="напр. Speakers"></label>
+    <input type="hidden" name="audio_output_endpoint_id">
     <label>Аудио UDP порт<input name="audio_udp_port" type="number" required></label>
     <div class="row">
       <div><label>Вход (микрофон/радио→сървър) сила
@@ -191,7 +197,8 @@ const form = document.getElementById("editForm");
 let editingOriginalName = null;
 
 const catDeviceSelect = document.getElementById("catDeviceSelect");
-const audioDeviceSelect = document.getElementById("audioDeviceSelect");
+const audioInputDeviceSelect = document.getElementById("audioInputDeviceSelect");
+const audioOutputDeviceSelect = document.getElementById("audioOutputDeviceSelect");
 let scannedDevices = { serial: [], audio: [] };
 
 async function loadDeviceOptions() {
@@ -207,13 +214,16 @@ async function loadDeviceOptions() {
     catDeviceSelect.appendChild(opt);
   });
 
-  audioDeviceSelect.innerHTML = '<option value="">— Ръчно въвеждане по-долу —</option>';
-  scannedDevices.audio.forEach((d, i) => {
-    const opt = document.createElement("option");
-    opt.value = i;
-    opt.textContent = `[${d.index}] ${d.name}`;
-    audioDeviceSelect.appendChild(opt);
-  });
+  for (const select of [audioInputDeviceSelect, audioOutputDeviceSelect]) {
+    select.innerHTML = '<option value="">— Ръчно въвеждане по-долу —</option>';
+    scannedDevices.audio.forEach((d, i) => {
+      if (!d.endpoint_id) return;
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = `[${d.index}] ${d.name}`;
+      select.appendChild(opt);
+    });
+  }
 }
 
 catDeviceSelect.onchange = () => {
@@ -231,13 +241,23 @@ function syncGainOutputs() {
   audio_output_gain_out.value = form.audio_output_gain.value;
 }
 
-audioDeviceSelect.onchange = () => {
-  if (audioDeviceSelect.value === "") return;
-  const d = scannedDevices.audio[parseInt(audioDeviceSelect.value)];
-  form.audio_name_contains.value = d.name;
-  form.audio_endpoint_id.value = d.endpoint_id || "";
+audioInputDeviceSelect.onchange = () => {
+  if (audioInputDeviceSelect.value === "") return;
+  const d = scannedDevices.audio[parseInt(audioInputDeviceSelect.value)];
+  form.audio_input_name_contains.value = d.name;
+  form.audio_input_endpoint_id.value = d.endpoint_id || "";
   if (d.volume != null) {
     form.audio_input_gain.value = d.volume;
+    syncGainOutputs();
+  }
+};
+
+audioOutputDeviceSelect.onchange = () => {
+  if (audioOutputDeviceSelect.value === "") return;
+  const d = scannedDevices.audio[parseInt(audioOutputDeviceSelect.value)];
+  form.audio_output_name_contains.value = d.name;
+  form.audio_output_endpoint_id.value = d.endpoint_id || "";
+  if (d.volume != null) {
     form.audio_output_gain.value = d.volume;
     syncGainOutputs();
   }
@@ -260,8 +280,10 @@ async function openEdit(r) {
     form.location.value = r.cat.location || "";
     form.tcp_port.value = r.cat.tcp_port;
     form.control_port.value = r.control_port;
-    form.audio_name_contains.value = r.audio.name_contains || "";
-    form.audio_endpoint_id.value = r.audio.endpoint_id || "";
+    form.audio_input_name_contains.value = r.audio.input_name_contains || "";
+    form.audio_input_endpoint_id.value = r.audio.input_endpoint_id || "";
+    form.audio_output_name_contains.value = r.audio.output_name_contains || "";
+    form.audio_output_endpoint_id.value = r.audio.output_endpoint_id || "";
     form.audio_udp_port.value = r.audio.udp_port;
     form.audio_input_gain.value = r.audio.input_gain != null ? r.audio.input_gain : 1.0;
     form.audio_output_gain.value = r.audio.output_gain != null ? r.audio.output_gain : 1.0;
@@ -295,8 +317,10 @@ function formToCfg() {
     },
     control_port: parseInt(f.get("control_port")),
     audio: {
-      name_contains: f.get("audio_name_contains") || null,
-      endpoint_id: f.get("audio_endpoint_id") || null,
+      input_name_contains: f.get("audio_input_name_contains") || null,
+      input_endpoint_id: f.get("audio_input_endpoint_id") || null,
+      output_name_contains: f.get("audio_output_name_contains") || null,
+      output_endpoint_id: f.get("audio_output_endpoint_id") || null,
       udp_port: parseInt(f.get("audio_udp_port")),
       input_gain: parseFloat(f.get("audio_input_gain")) || 1.0,
       output_gain: parseFloat(f.get("audio_output_gain")) || 1.0,
@@ -499,6 +523,19 @@ async function checkForUpdate() {
     banner.style.display = "none";
   }
 }
+
+document.getElementById("checkUpdateBtn").onclick = async () => {
+  const btn = document.getElementById("checkUpdateBtn");
+  btn.disabled = true;
+  btn.textContent = "Проверка...";
+  try {
+    await api("/api/update/check", { method: "POST" });
+    await checkForUpdate();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Провери за ъпдейт";
+  }
+};
 
 document.getElementById("updateApplyBtn").onclick = async () => {
   if (!confirm("Сървърът ще спре, ще инсталира новата версия и трябва да го стартираш ръчно отново. Всички активни радио/аудио връзки ще прекъснат. Продължи?")) return;
