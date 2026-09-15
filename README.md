@@ -198,22 +198,38 @@ com0com виртуална двойка портове (по ЕДНА на кл�
 ## Конфигурация
 
 1. Пусни `python -m server.list_devices`, за да видиш реалните VID/PID/
-   сериен номер на CAT адаптерите и `endpoint_id` на аудио устройствата.
+   сериен номер на CAT адаптерите и `endpoint_id` на аудио устройствата
+   (или ползвай dropdown-ите direct в admin панела — виж по-долу).
 2. Първо стартиране: `server/config.json` — списък `"radios"` — служи
    само като seed. Ако `db.dsn` е зададен и таблицата `radio_configs` е
    празна, сървърът я зарежда там еднократно; след това конфигурацията
    се управлява през admin панела, не през config.json.
-3. `db.dsn` вече е практически задължителен за Фаза 3 (login и radio
-   CRUD изискват PostgreSQL) — приложи схемата: `psql <dsn> -f server/db/schema.sql`.
-   Без `dsn` bridge-овете пак тръгват от config.json, но admin панелът
-   е read-only/недостъпен за login.
-4. Създай admin потребител: `python -m server.create_admin ivan парола123`.
-5. `client/config.json` (ivan) / `client/config.ic746.json` (georgi) —
+3. **PostgreSQL** — задължителен за admin панела (login, radio/amp CRUD,
+   логване). Без него bridge-овете пак тръгват от `config.json`, но
+   панелът показва инструкции вместо login форма.
+   1. Инсталирай PostgreSQL, ако нямаш: postgresql.org/download (или
+      "Install PostgreSQL" task-а в server инсталатора, ако е даден
+      redist — виж `packaging/installer/redist/README.md`).
+   2. Създай база: `createdb -U postgres hamradio` (или
+      `psql -U postgres -c "CREATE DATABASE hamradio;"`).
+   3. В `server/config.json` (до .exe-то, не в repo-то, ако си инсталирал
+      през setup.exe) задай:
+      ```json
+      "db": { "dsn": "postgresql://postgres:ТВОЯТА_ПАРОЛА@localhost:5432/hamradio" }
+      ```
+      Формат: `postgresql://потребител:парола@host:порт/база`.
+   4. Рестартирай сървъра — схемата (таблиците) се прилага автоматично
+      при всяко стартиране, няма ръчна `psql -f schema.sql` стъпка.
+   5. Отвори `http://<server-ip>:8080/` — при празна база те праща
+      направо към `/setup`, за да създадеш първия admin от браузъра
+      (алтернатива: `python -m server.create_admin ivan парола123` от
+      команден ред).
+4. `client/config.json` (ivan) / `client/config.ic746.json` (georgi) —
    всеки изброява ВСИЧКИ радиа в `"radios"`, с различни локални портове
    (com0com порт, аудио/CW UDP), за да могат двата примерни клиента да
-   тестват едновременно на една машина. CW източник (прав ключ/iambic/
-   WinKeyer) и RC-28 се сменят от "Настройки" екрана в самия клиент, не
-   ръчно във файла.
+   тестват едновременно на една машина. Сървър адрес, CW източник (прав
+   ключ/iambic/WinKeyer) и RC-28 се сменят от "Настройки" екрана в
+   самия клиент, не ръчно във файла.
 
 ## Стартиране
 

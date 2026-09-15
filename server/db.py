@@ -301,7 +301,14 @@ class PostgresDb:
 async def build_db(db_cfg):
     dsn = (db_cfg or {}).get("dsn")
     if not dsn:
-        log.warning("no db.dsn configured — session/transmission logging and the admin panel are disabled")
+        log.warning(
+            "no db.dsn configured — session/transmission logging and the admin panel are disabled. "
+            "To enable them: install PostgreSQL, create a database (e.g. `createdb hamradio`), "
+            "then set db.dsn in config.json (next to this .exe) to "
+            "postgresql://<user>:<password>@<host>:<port>/<database>, "
+            "e.g. postgresql://postgres:mypassword@localhost:5432/hamradio — and restart the server. "
+            "See README.md / packaging/README.md for the full walkthrough."
+        )
         return NullDb()
     db = PostgresDb(dsn)
     await db.connect()
