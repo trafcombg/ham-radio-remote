@@ -19,7 +19,14 @@ from common.firewall import ensure_ports_open
 from common.updater import check_for_update
 from common.version import APP_VERSION
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+def _setup_logging():
+    handlers = [logging.FileHandler(app_dir(__file__) / "client.log", encoding="utf-8")]
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=handlers)
+
+
+_setup_logging()
 log = logging.getLogger("client")
 
 UPDATE_CHECK_INTERVAL_S = 6 * 3600
@@ -108,7 +115,10 @@ def main():
     exit_code = app.exec()
 
     future = asyncio.run_coroutine_threadsafe(session.shutdown(), loop)
-    future.result(timeout=5)
+    try:
+        future.result(timeout=5)
+    except Exception:
+        log.warning("спирането отне твърде дълго / завърши с грешка", exc_info=True)
     loop.call_soon_threadsafe(loop.stop)
     sys.exit(exit_code)
 
