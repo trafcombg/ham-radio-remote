@@ -29,6 +29,7 @@ from server.device_registry import (
     scan_serial_devices,
 )
 from server.amplifier_manager import AmplifierManager
+from server.antenna_switch_manager import AntennaSwitchManager
 from server.radio_manager import RadioBusyError, RadioManager
 from server.serial_sniffer import SnifferSession
 from server.web_auth import create_session_cookie, read_session_cookie
@@ -45,6 +46,10 @@ def get_manager(request: Request) -> RadioManager:
 
 def get_amp_manager(request: Request) -> AmplifierManager:
     return request.app.state.amp_manager
+
+
+def get_switch_manager(request: Request) -> AntennaSwitchManager:
+    return request.app.state.switch_manager
 
 
 def get_db(request: Request):
@@ -152,6 +157,18 @@ class AmplifierConfigRequest(BaseModel):
 
 class AmplifierModeRequest(BaseModel):
     mode: str  # operate | standby | off
+
+
+class AntennaSwitchConfigRequest(BaseModel):
+    name: str
+    model: str = "RSW8A1ER"
+    serial_port: str
+    linked_radio: str  # required, unlike the amplifier's — a switch is wired inline with one radio's feedline
+    port_labels: list[str] = []  # what's plugged into each port, e.g. "20m Dipole" — padded/truncated to 8 on save
+
+
+class AntennaSwitchPortRequest(BaseModel):
+    port: int
 
 
 class UserRequest(BaseModel):
@@ -546,6 +563,92 @@ async def set_client_amplifier_mode(name: str, body: AmplifierModeRequest, reque
         raise HTTPException(status_code=404, detail="усилвателят не е свързан")
     _apply_amp_mode(bridge, body.mode)
     return {"ok": True}
+
+
+@app.get("/api/antenna-switches")
+async def list_antenna_switches(request: Request, admin=Depends(require_admin)):
+    db = get_db(request)
+    switch_manager = get_switch_manager(request)
+    configs = await db.list_antenna_switch_configs()
+    status = switch_manager.status()
+    for cfg in configs:
+        cfg.update(status.get(cfg["name"], {}))
+    return {"antenna_switches": configs}
+
+
+@app.post("/api/antenna-switches")
+async def create_antenna_switch(body: AntennaSwitchConfigRequest, request: Request, admin=Depends(require_admin)):
+    switch_manager = get_switch_manager(request)
+    await switch_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.put("/api/antenna-switches/{name}")
+async def update_antenna_switch(name: str, body: AntennaSwitchConfigRequest, request: Request, admin=Depends(require_admin)):
+    if body.name != name:
+        raise HTTPException(status_code=400, detail="name mismatch")
+    switch_manager = get_switch_manager(request)
+    await switch_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.delete("/api/antenna-switches/{name}")
+async def delete_antenna_switch(name: str, request: Request, admin=Depends(require_admin)):
+    switch_manager = get_switch_manager(request)
+    await switch_manager.remove(name)
+    return {"ok": True}
+
+
+async def _select_antenna_switch_port(switch_manager: AntennaSwitchManager, name: str, port: int, username: str | None):
+    bridge = switch_manager.bridges.get(name)
+    if not bridge:
+        raise HTTPException(status_code=404, detail="суичът не е свързан")
+    if not 1 <= port <= 8:
+        raise HTTPException(status_code=400, detail="port трябва да е 1-8")
+    if switch_manager.is_radio_transmitting(bridge.cfg["linked_radio"]):
+        raise HTTPException(status_code=409, detail="радиото предава — превключването на антена е блокирано")
+    await bridge.select_port(port, username)
+    return {"ok": True, "port": port}
+
+
+@app.post("/api/antenna-switches/{name}/port")
+async def set_antenna_switch_port(name: str, body: AntennaSwitchPortRequest, request: Request, admin=Depends(require_admin)):
+    return await _select_antenna_switch_port(get_switch_manager(request), name, body.port, admin["username"])
+
+
+@app.get("/api/client/antenna-switches")
+async def list_client_antenna_switches(request: Request, user=Depends(client_user)):
+    db = get_db(request)
+    switch_manager = get_switch_manager(request)
+    configs = await db.list_antenna_switch_configs() if isinstance(db, PostgresDb) else []
+    status = switch_manager.status()
+    result = []
+    for cfg in configs:
+        can_control = bool(user["is_admin"])
+        if not can_control and isinstance(db, PostgresDb):
+            can_control = await db.user_can_access_radio(user["username"], cfg["linked_radio"])
+        result.append({
+            "name": cfg["name"],
+            "model": cfg.get("model"),
+            "linked_radio": cfg["linked_radio"],
+            "port": status.get(cfg["name"], {}).get("port"),
+            "port_labels": cfg.get("port_labels") or [],
+            "can_control": can_control,
+        })
+    return {"antenna_switches": result}
+
+
+@app.post("/api/client/antenna-switches/{name}/port")
+async def set_client_antenna_switch_port(name: str, body: AntennaSwitchPortRequest, request: Request, user=Depends(client_user)):
+    db = get_db(request)
+    switch_manager = get_switch_manager(request)
+    if not user["is_admin"]:
+        bridge = switch_manager.bridges.get(name)
+        linked_radio = bridge.cfg["linked_radio"] if bridge else None
+        allowed = linked_radio and isinstance(db, PostgresDb) and await db.user_can_access_radio(user["username"], linked_radio)
+        if not allowed:
+            raise HTTPException(status_code=403, detail="нямаш права за радиото на този суич")
+    return await _select_antenna_switch_port(switch_manager, name, body.port, user["username"])
 
 
 @app.get("/api/users")

@@ -5,10 +5,12 @@ real database (there's nowhere else to durably store users/radios)."""
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 
 from common.app_paths import app_dir
+from common.rsw8a1er_protocol import normalize_port_labels
 
 log = logging.getLogger("db")
 
@@ -144,6 +146,18 @@ class NullDb:
         raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази усилватели")
 
     async def log_amplifier_telemetry(self, name, telemetry):
+        pass
+
+    async def list_antenna_switch_configs(self):
+        return []
+
+    async def upsert_antenna_switch_config(self, cfg):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази антенни суичове")
+
+    async def delete_antenna_switch_config(self, name):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази антенни суичове")
+
+    async def log_antenna_switch_event(self, name, port, username):
         pass
 
 
@@ -434,6 +448,41 @@ class PostgresDb:
                 name, telemetry.get("status"), telemetry.get("output_power_w"),
                 telemetry.get("reflected_power_w"), telemetry.get("swr"), telemetry.get("temp_c"),
                 telemetry.get("fault"),
+            )
+
+    async def list_antenna_switch_configs(self):
+        async with self.pool.acquire() as c:
+            rows = await c.fetch("SELECT * FROM antenna_switch_configs ORDER BY name")
+        result = []
+        for r in rows:
+            cfg = dict(r)
+            cfg["port_labels"] = json.loads(cfg["port_labels"])
+            result.append(cfg)
+        return result
+
+    async def upsert_antenna_switch_config(self, cfg: dict):
+        port_labels = json.dumps(normalize_port_labels(cfg.get("port_labels")))
+        async with self.pool.acquire() as c:
+            await c.execute(
+                """
+                INSERT INTO antenna_switch_configs (name, model, serial_port, linked_radio, port_labels, updated_at)
+                VALUES ($1,$2,$3,$4,$5, now())
+                ON CONFLICT (name) DO UPDATE SET
+                    model = EXCLUDED.model, serial_port = EXCLUDED.serial_port,
+                    linked_radio = EXCLUDED.linked_radio, port_labels = EXCLUDED.port_labels, updated_at = now()
+                """,
+                cfg["name"], cfg.get("model", "RSW8A1ER"), cfg.get("serial_port"), cfg["linked_radio"], port_labels,
+            )
+
+    async def delete_antenna_switch_config(self, name):
+        async with self.pool.acquire() as c:
+            await c.execute("DELETE FROM antenna_switch_configs WHERE name = $1", name)
+
+    async def log_antenna_switch_event(self, name, port, username):
+        async with self.pool.acquire() as c:
+            await c.execute(
+                "INSERT INTO antenna_switch_events (switch_name, port, changed_by) VALUES ($1,$2,$3)",
+                name, port, username,
             )
 
 

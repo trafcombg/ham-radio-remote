@@ -20,6 +20,7 @@ from common.updater import check_for_update
 from common.version import APP_VERSION
 from server.admin_api import app as admin_app
 from server.amplifier_manager import AmplifierManager
+from server.antenna_switch_manager import AntennaSwitchManager
 from server.db import build_db
 from server.device_registry import watch_devices
 from server.radio_manager import RadioManager
@@ -102,6 +103,9 @@ async def main():
     amp_manager = AmplifierManager(db, manager)
     await amp_manager.load_all()
 
+    switch_manager = AntennaSwitchManager(db, manager)
+    await switch_manager.load_all()
+
     admin_app.state.pending_update = None
     admin_app.state.apply_update = _apply_pending_update
     admin_app.state.check_for_update_now = _check_for_update_once
@@ -113,6 +117,7 @@ async def main():
     admin_app.state.db = db
     admin_app.state.manager = manager
     admin_app.state.amp_manager = amp_manager
+    admin_app.state.switch_manager = switch_manager
 
     ports = [(port, "tcp")]
     for radio_cfg in await manager.list_configs():

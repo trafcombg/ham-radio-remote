@@ -362,6 +362,39 @@ python -m server.serial_sniffer COM7 9600              # само слуша
 python -m server.serial_sniffer COM7 9600 --mitm COM9  # MITM
 ```
 
+## Антенен суич RSW8A1ER (8 порта)
+
+Пълна сървърна интеграция, по модел на ACOM усилвателя (Bridge + Manager +
+admin CRUD + клиентски API), но по-опростена: суичът е окачен на точно
+едно радио (в неговата линия до антената), не споделен — затова достъпът
+е през същото право за радиото (`user_can_access_radio`), без отделна
+таблица за права per суич.
+
+- **Протоколът е реверснат от истинска снимка** (`server/serial_sniffer.py`
+  MITM, всичките 8 порта тествани) — виж `common/rsw8a1er_protocol.py`.
+  Рамка към суича: `0x01 <дължина> <ASCII команда> \r`. Команди: `D`
+  (модел, отговор `D=8A1R`), `R` (текущ порт), `W1`…`W8` (превключи на
+  порт N, отговор `R=<port><port>10` — цифрата на порта е потвърдена във
+  всичките 8 проби, наставката `10` е константна в тази снимка, но
+  значението ѝ не е потвърдено — никога не видяхме fault състояние).
+- **Безопасност:** превключване на порт докато свързаното радио предава
+  се отказва от сървъра (409) — рискува да изгори контактите на релето
+  или крайния каскад на предавателя. Проверката чете същия
+  `PttArbiter.holder`, който вече пази PTT, не е отделен lock.
+  Клиентът превантивно disable-ва бутоните, докато чака сървъра.
+- **Клиент:** редът "Антена" се появява във вградения радио панел
+  (`client/radio_panel.py`) само когато текущо избраното радио има
+  свързан суич — 8 бутона, текущият порт е checked, с tooltip и статус
+  ред, показващи какво е свързано на всеки порт.
+- **Имена на портовете** — всеки от 8-те порта се надписва свободно
+  ("20m Dipole", "Vertical"...) от admin панела; пазят се в
+  `antenna_switch_configs.port_labels` (JSON масив от 8 низа,
+  `common/rsw8a1er_protocol.normalize_port_labels` гарантира точна
+  дължина 8 независимо какво е подадено).
+- **Admin панел:** таблица "Антенни суичове" — име, модел, свързано
+  радио, текущ порт + името му; диалог с избор на сериен порт от
+  `/api/devices` и 8 текстови полета за имената на портовете.
+
 ## Самопроверки (без хардуер/база)
 
 ```bash
@@ -370,8 +403,10 @@ python -m server.device_registry
 python -m server.db
 python -m server.radio_bridge
 python -m server.amplifier_bridge
+python -m server.antenna_switch_bridge
 python -m server.serial_sniffer --self-check
 python -m common.civ
+python -m common.rsw8a1er_protocol
 python -m common.morse
 python -m common.acom_protocol
 python -m client.cw.iambic

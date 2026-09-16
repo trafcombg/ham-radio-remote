@@ -43,6 +43,7 @@ log = logging.getLogger("session")
 
 RADIOS_FETCH_TIMEOUT_S = 5
 AMPLIFIER_POLL_INTERVAL_S = 5
+ANTENNA_SWITCH_POLL_INTERVAL_S = 5
 CONTROL_RECONNECT_DELAY_S = 3.0
 CAT_BUSY_POLL_INTERVAL_S = 4.0
 
@@ -117,6 +118,8 @@ class RadioSession:
         self.server_version = None
         self.amplifiers: list = []  # polled periodically — see start_amplifier_poll(); ui.py just reads this
         self._amp_poll_task = None
+        self.antenna_switches: list = []  # polled periodically — see start_antenna_switch_poll(); radio_panel.py reads this
+        self._switch_poll_task = None
         self.radio_name = None
         self.control = None
         self.audio = None
@@ -188,6 +191,49 @@ class RadioSession:
         while True:
             self.amplifiers = await self.fetch_amplifiers()
             await asyncio.sleep(AMPLIFIER_POLL_INTERVAL_S)
+
+    def _fetch_antenna_switches_sync(self) -> list:
+        req = urllib.request.Request(
+            f"{self._api_base()}/api/client/antenna-switches", headers={"Authorization": self._basic_auth_header()}
+        )
+        with urllib.request.urlopen(req, timeout=RADIOS_FETCH_TIMEOUT_S) as resp:
+            return json.loads(resp.read())["antenna_switches"]
+
+    async def fetch_antenna_switches(self) -> list:
+        """Every configured antenna switch, each flagged with can_control
+        and its linked_radio — radio_panel.py filters to the one (if any)
+        whose linked_radio matches the currently selected radio."""
+        try:
+            return await asyncio.to_thread(self._fetch_antenna_switches_sync)
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            log.warning("не успях да взема списъка с антенни суичове (%s)", e)
+            return []
+
+    def _set_antenna_switch_port_sync(self, name: str, port: int) -> tuple:
+        url = f"{self._api_base()}/api/client/antenna-switches/{urllib.parse.quote(name)}/port"
+        req = urllib.request.Request(
+            url, method="POST",
+            data=json.dumps({"port": port}).encode(),
+            headers={"Authorization": self._basic_auth_header(), "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=RADIOS_FETCH_TIMEOUT_S) as resp:
+                return True, json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")
+            return False, detail
+
+    async def set_antenna_switch_port(self, name: str, port: int) -> tuple:
+        return await asyncio.to_thread(self._set_antenna_switch_port_sync, name, port)
+
+    async def start_antenna_switch_poll(self):
+        if self._switch_poll_task is None:
+            self._switch_poll_task = asyncio.create_task(self._antenna_switch_poll_loop())
+
+    async def _antenna_switch_poll_loop(self):
+        while True:
+            self.antenna_switches = await self.fetch_antenna_switches()
+            await asyncio.sleep(ANTENNA_SWITCH_POLL_INTERVAL_S)
 
     async def start_cat_busy_poll(self):
         if self._cat_busy_poll_task is None:
@@ -495,6 +541,8 @@ class RadioSession:
         await self._teardown()
         if self._amp_poll_task:
             self._amp_poll_task.cancel()
+        if self._switch_poll_task:
+            self._switch_poll_task.cancel()
         if self._cat_busy_poll_task:
             self._cat_busy_poll_task.cancel()
         for task in self._cat_tasks.values():

@@ -183,6 +183,30 @@
   <tbody></tbody>
 </table>
 
+<h1>Антенни суичове (RSW8A1ER)</h1>
+<button id="addSwitchBtn">+ Добави суич</button>
+<table id="switchTable">
+  <thead><tr><th>Име</th><th>Модел</th><th>Свързано радио</th><th>Текущ порт</th><th></th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<dialog id="switchDialog">
+  <h2 id="switchDialogTitle">Антенен суич</h2>
+  <form id="switchForm">
+    <label>Име<input name="name" required></label>
+    <label>Модел<input name="model" value="RSW8A1ER" required></label>
+    <label>Сериен порт<select name="serial_port_select"></select></label>
+    <label>Сериен порт (ръчно, ако не е в списъка)<input name="serial_port" placeholder="COM7" required></label>
+    <label>Свързано радио<select name="linked_radio" required></select></label>
+    <label>Портове — какво е свързано на всеки</label>
+    <div id="switchPortLabels" style="display:grid; grid-template-columns: 1fr 1fr; gap:.4rem .6rem;"></div>
+    <div style="margin-top:1rem; display:flex; gap:.5rem;">
+      <button type="submit">Запази</button>
+      <button type="button" id="switchCancelBtn" class="secondary">Отказ</button>
+    </div>
+  </form>
+</dialog>
+
 <h1>Потребители</h1>
 <button id="addUserBtn">+ Добави потребител</button>
 <table id="userTable">
@@ -649,6 +673,119 @@ async function deleteAmplifier(name) {
   loadAmplifiers();
 }
 
+let antennaSwitches = [];
+const switchDialog = document.getElementById("switchDialog");
+const switchForm = document.getElementById("switchForm");
+let editingSwitchName = null;
+
+async function loadAntennaSwitches() {
+  const res = await api("/api/antenna-switches");
+  const body = await res.json();
+  antennaSwitches = body.antenna_switches;
+  renderSwitchTable();
+}
+
+function renderSwitchTable() {
+  const tbody = document.querySelector("#switchTable tbody");
+  tbody.innerHTML = "";
+  for (const s of antennaSwitches) {
+    const tr = document.createElement("tr");
+    const label = s.port ? (s.port_labels || [])[s.port - 1] : "";
+    const portText = s.port ? `${s.port}${label ? " — " + label : ""}` : "—";
+    tr.innerHTML = `
+      <td>${s.name}</td>
+      <td>${s.model}</td>
+      <td>${s.linked_radio}</td>
+      <td>${portText}</td>
+      <td></td>`;
+    const actionsTd = tr.lastElementChild;
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Редактирай";
+    editBtn.className = "secondary";
+    editBtn.onclick = () => openSwitchEdit(s);
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "Изтрий";
+    delBtn.className = "danger";
+    delBtn.onclick = () => deleteAntennaSwitch(s.name);
+    actionsTd.append(editBtn, delBtn);
+    tbody.appendChild(tr);
+  }
+}
+
+async function openSwitchEdit(s) {
+  editingSwitchName = s ? s.name : null;
+  document.getElementById("switchDialogTitle").textContent = s ? "Редактирай " + s.name : "Нов суич";
+  switchForm.reset();
+  await loadDeviceOptions();  // freshly scanned serial ports, independent of whether the radio dialog was ever opened
+
+  const portSelect = switchForm.serial_port_select;
+  portSelect.innerHTML = '<option value="">— Ръчно въвеждане по-долу —</option>';
+  scannedDevices.serial.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d.port;
+    const vidpid = d.vid != null ? `${d.vid.toString(16)}:${d.pid.toString(16)}` : "?";
+    opt.textContent = `${d.port} — ${vidpid}`;
+    portSelect.appendChild(opt);
+  });
+  portSelect.onchange = () => { if (portSelect.value) switchForm.serial_port.value = portSelect.value; };
+
+  const radioSelect = switchForm.linked_radio;
+  radioSelect.innerHTML = radios.map(r => `<option value="${r.name}">${r.name}</option>`).join("");
+
+  const labels = (s && s.port_labels) || [];
+  const portLabelsDiv = document.getElementById("switchPortLabels");
+  portLabelsDiv.innerHTML = "";
+  for (let i = 0; i < 8; i++) {
+    const label = document.createElement("label");
+    label.style.cssText = "display:flex; align-items:center; gap:.4rem; margin-top:0;";
+    const input = document.createElement("input");
+    input.name = `port_label_${i + 1}`;
+    input.placeholder = `напр. 20m Dipole`;
+    input.value = labels[i] || "";
+    label.append(`${i + 1}:`, input);
+    portLabelsDiv.appendChild(label);
+  }
+
+  if (s) {
+    switchForm.name.value = s.name;
+    switchForm.model.value = s.model;
+    switchForm.serial_port.value = s.serial_port || "";
+    switchForm.linked_radio.value = s.linked_radio;
+  }
+  switchDialog.showModal();
+}
+
+document.getElementById("addSwitchBtn").onclick = () => openSwitchEdit(null);
+document.getElementById("switchCancelBtn").onclick = () => switchDialog.close();
+
+switchForm.onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(switchForm);
+  const cfg = {
+    name: f.get("name"),
+    model: f.get("model"),
+    serial_port: f.get("serial_port"),
+    linked_radio: f.get("linked_radio"),
+    port_labels: Array.from({ length: 8 }, (_, i) => f.get(`port_label_${i + 1}`) || ""),
+  };
+  const isNew = !editingSwitchName;
+  const url = isNew ? "/api/antenna-switches" : `/api/antenna-switches/${encodeURIComponent(editingSwitchName)}`;
+  const res = await api(url, { method: isNew ? "POST" : "PUT", body: JSON.stringify(cfg) });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert("Грешка: " + JSON.stringify(body.detail || res.status));
+    return;
+  }
+  switchDialog.close();
+  loadAntennaSwitches();
+};
+
+async function deleteAntennaSwitch(name) {
+  if (!confirm(`Изтриване на ${name}?`)) return;
+  await api(`/api/antenna-switches/${encodeURIComponent(name)}`, { method: "DELETE" });
+  loadAntennaSwitches();
+}
+
 let users = [];
 const userDialog = document.getElementById("userDialog");
 const userForm = document.getElementById("userForm");
@@ -899,6 +1036,7 @@ document.getElementById("updateApplyBtn").onclick = async () => {
   if (!me.user || !me.user.is_admin) { location.href = "/login"; return; }
   loadRadios();
   loadAmplifiers();
+  loadAntennaSwitches();
   loadUsers();
   checkForUpdate();
   setInterval(checkForUpdate, 5 * 60 * 1000);

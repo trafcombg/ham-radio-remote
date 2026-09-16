@@ -115,6 +115,35 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
     fault BOOLEAN
 );
 
+-- RSW8A1ER antenna switch config + a log of who switched what port when.
+-- Unlike amplifier_configs, no separate per-user ACL table: a switch is
+-- always wired inline with one radio's feedline (not shared the way an
+-- amplifier can be), so access reuses user_radio_access via linked_radio
+-- (see db.py user_can_access_radio) instead of duplicating it.
+CREATE TABLE IF NOT EXISTS antenna_switch_configs (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    model TEXT NOT NULL DEFAULT 'RSW8A1ER',
+    serial_port TEXT,
+    linked_radio TEXT NOT NULL,
+    -- JSON array of exactly 8 strings, index 0 = port 1's label (e.g.
+    -- "20m Dipole") — see common.rsw8a1er_protocol.normalize_port_labels,
+    -- always applied before this is written. Plain TEXT, not JSONB: no
+    -- other column in this schema uses jsonb, and asyncpg doesn't
+    -- auto-decode it without extra codec setup — a flat TEXT column
+    -- json.loads()'d in db.py matches every other column's style here.
+    port_labels TEXT NOT NULL DEFAULT '[]',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS antenna_switch_events (
+    id SERIAL PRIMARY KEY,
+    switch_name TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    changed_by TEXT,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Migration for radio_configs created before audio gain controls existed —
 -- a no-op on a fresh database (the CREATE TABLE above already has them).
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
