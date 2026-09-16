@@ -376,17 +376,25 @@ class RadioSession:
         (set_rc28_enabled) — by the time either calls this, any previous
         driver has already cleaned itself up (see _run_rc28's finally),
         so `self.rc28` truthy here really does mean "already running"."""
-        if self.rc28 or not self.app_cfg.get("rc28", {}).get("enabled"):
+        if self.rc28:
+            return
+        if not self.app_cfg.get("rc28", {}).get("enabled"):
+            log.info("RC-28 not started — disabled in settings")
             return
         relay = self.cat_relays.get(self.radio_name)
         if not self.radio_cfg or not self.radio_cfg.get("civ_address") or not relay:
             if self.radio_cfg:
                 self.rc28_error = "RC-28 изисква CI-V адрес за това радио (виж admin панела)"
+            log.warning(
+                "RC-28 not started for %s — civ_address=%s relay=%s",
+                self.radio_name, self.radio_cfg.get("civ_address") if self.radio_cfg else None, bool(relay),
+            )
             return
         driver = Rc28Driver(relay.send_cat, self.radio_cfg["civ_address"], self.app_cfg["rc28"].get("step_hz", 10))
         relay.add_cat_listener(driver.on_cat_reply)
         self.rc28 = driver
         self.rc28_error = None
+        log.info("RC-28 starting for %s (CI-V %02X) — opening USB device...", self.radio_name, self.radio_cfg["civ_address"])
         self._tasks.append(asyncio.create_task(self._run_rc28(driver, relay)))
 
     async def set_rc28_enabled(self, enabled: bool):
@@ -473,6 +481,10 @@ class RadioSession:
             self._tasks.append(asyncio.create_task(self.radio_ctl.run()))
         else:
             self.radio_ctl = None
+            log.info(
+                "radio panel not started for %s — civ_address=%s relay=%s",
+                self.radio_name, radio_cfg.get("civ_address"), bool(relay),
+            )
 
         log.info("switched to radio %s", self.radio_name)
 

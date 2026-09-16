@@ -65,6 +65,13 @@ class RadioPanelController:
         await self.send_cat(set_mode_command(self.civ_address, mode, filter_num))
 
     async def run(self):
+        # INFO, not DEBUG: this line alone in client.log proves the polling
+        # loop actually started (civ_address configured, relay was up) —
+        # the previous silence made "nothing updates" indistinguishable
+        # from "never even tried" and "radio never replies".
+        log.info("radio panel CAT polling started (CI-V %02X)", self.civ_address)
+        silent_cycles = 0
+        warned = False
         while True:
             await self.send_cat(get_frequency_command(self.civ_address))
             await asyncio.sleep(POLL_INTERVAL_S / 3)
@@ -72,6 +79,19 @@ class RadioPanelController:
             await asyncio.sleep(POLL_INTERVAL_S / 3)
             await self.send_cat(get_smeter_command(self.civ_address))
             await asyncio.sleep(POLL_INTERVAL_S / 3)
+            if self.frequency_hz is None:
+                silent_cycles += 1
+                if silent_cycles == 10 and not warned:
+                    warned = True
+                    log.warning(
+                        "no CI-V reply from the radio after ~%ds (CI-V %02X) — "
+                        "check the radio's own CI-V address/baud and that CI-V "
+                        "transceive/remote is enabled on the radio itself",
+                        round(10 * POLL_INTERVAL_S), self.civ_address,
+                    )
+            else:
+                silent_cycles = 0
+                warned = False
 
 
 if __name__ == "__main__":
