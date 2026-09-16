@@ -88,7 +88,8 @@
   <form id="editForm">
     <label><input name="active" type="checkbox" style="width:auto; display:inline-block;" checked> Активно (сървърът го ползва)</label>
     <label>Име<input name="name" required></label>
-    <label>Модел<input name="model"></label>
+    <label>Модел<input name="model" list="icomModels" oninput="onModelInput()"></label>
+    <datalist id="icomModels"></datalist>
     <label>Открито CAT устройство
       <select id="catDeviceSelect"><option value="">— Ръчно въвеждане по-долу —</option></select>
     </label>
@@ -242,6 +243,24 @@
 
 <script>
 let radios = [];
+
+// Factory-default CI-V addresses per Icom model (from Icom's own RS-BA1
+// remote-control software) — lets the admin form auto-fill the CI-V
+// address field instead of having to look it up in the radio's manual.
+const ICOM_CIV_ADDRESSES = {
+  "IC-7000": "70", "IC-7100": "88", "IC-7200": "76", "IC-7300": "94",
+  "IC-7400/746PRO": "66", "IC-7410": "80", "IC-705": "a4", "IC-746": "56",
+  "IC-756PRO": "5c", "IC-756PRO2": "64", "IC-756PRO3": "6e", "IC-7600": "7a",
+  "IC-7610": "98", "IC-7700": "74", "IC-7760": "b2", "IC-7800": "6a",
+  "IC-7850/7851": "8e", "IC-905": "ac", "IC-9100": "7c", "IC-9700": "a2",
+};
+document.getElementById("icomModels").innerHTML =
+  Object.keys(ICOM_CIV_ADDRESSES).map(m => `<option value="${m}">`).join("");
+
+function onModelInput() {
+  const addr = ICOM_CIV_ADDRESSES[editForm.model.value];
+  if (addr && !editForm.civ_address.value) editForm.civ_address.value = addr;
+}
 
 async function api(path, opts) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));

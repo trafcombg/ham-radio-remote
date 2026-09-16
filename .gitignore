@@ -10,3 +10,7 @@ venv/
 /dist/
 /dist_installers/
 packaging/installer/redist/*.exe
+
+# Icom's own RS-BA1 v2 software — proprietary, kept locally for reference
+# (per-model CI-V .ini files) only, never committed.
+/RS-BA1/
