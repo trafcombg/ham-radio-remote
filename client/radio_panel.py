@@ -1,8 +1,9 @@
 """Built-in radio control panel — frequency, mode, and S-meter, driven
 over the same CAT tunnel real CAT software (WSJT-X, N1MM+...) uses.
-Modeled on Icom RS-BA1 v2's Operate screen: a big frequency readout,
-mode buttons, and an S-meter — for when the operator doesn't want to
-run a separate CAT app just to change frequency or mode.
+Modeled on Icom RS-BA1 v2's Operate screen (a separate window from the
+main connection window, dark rig-style readout, big frequency digits,
+mode buttons, S-meter) — for when the operator doesn't want to run a
+separate CAT app just to change frequency or mode.
 
 ponytail: RS-BA1 also has a spectrum scope, memory channels, RIT/XIT,
 and NB/NR toggles — none of that is here. Add the piece that's actually
@@ -14,8 +15,8 @@ import asyncio
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QProgressBar,
-    QPushButton, QVBoxLayout,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QLineEdit, QProgressBar,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from common.civ import MODE_NAMES, NAME_TO_MODE
@@ -54,21 +55,59 @@ def smeter_label(raw: int | None) -> str:
     return f"S9+{round((raw - 141) / (241 - 141) * 60)}"
 
 
-class RadioPanel(QGroupBox):
-    """No asyncio here — reads session.radio_ctl's plain attributes on a
-    timer tick (tick(), called from ui.py's own poll timer — same
-    pattern as the audio level meters), and posts commands back via
-    run_coroutine_threadsafe, same as the PTT button."""
+# Dark rig-style look, roughly matching Icom RS-BA1 v2's Operate window —
+# scoped to this widget's objectName so it never bleeds into the rest of
+# the app (which uses the plain OS theme).
+RS_BA1_STYLE = """
+QWidget#radioPanelRoot { background: #1b1e23; }
+QWidget#radioPanelRoot QLabel { color: #c9d3dc; }
+QLineEdit#freqDisplay {
+    background: #04150c; color: #39ff6a; border: 2px solid #2f3640;
+    border-radius: 4px; padding: 4px;
+}
+QWidget#radioPanelRoot QPushButton {
+    background: #2a2f37; color: #dfe6ee; border: 1px solid #3a4048;
+    border-radius: 4px; padding: 6px 10px;
+}
+QWidget#radioPanelRoot QPushButton:hover { background: #333a44; }
+QWidget#radioPanelRoot QPushButton:disabled { color: #5a6068; }
+QPushButton#modeBtn:checked { background: #3b82f6; color: white; border-color: #3b82f6; }
+QPushButton#bandBtn { padding: 4px 8px; font-size: 11px; }
+QWidget#radioPanelRoot QComboBox {
+    background: #2a2f37; color: #dfe6ee; border: 1px solid #3a4048;
+    border-radius: 4px; padding: 4px;
+}
+QProgressBar#smeterBar { background: #04150c; border: 1px solid #2f3640; border-radius: 3px; }
+QProgressBar#smeterBar::chunk {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 #39ff6a, stop:0.6 #39ff6a, stop:0.75 #f59e0b, stop:1 #ef4444);
+    border-radius: 3px;
+}
+QWidget#radioPanelRoot QCheckBox { color: #c9d3dc; }
+"""
+
+
+class RadioPanel(QWidget):
+    """A separate top-level window (like RS-BA1's own Operate screen is
+    separate from its connection window), not embedded in MainWindow —
+    ui.py just shows/raises it. No asyncio here — reads session.radio_ctl's
+    plain attributes on a timer tick (tick(), called from ui.py's own poll
+    timer — same pattern as the audio level meters), and posts commands
+    back via run_coroutine_threadsafe, same as the PTT button."""
 
     def __init__(self, session, loop, parent=None):
-        super().__init__("Радио (вграден панел)", parent)
+        super().__init__(parent)
+        self.setObjectName("radioPanelRoot")
+        self.setWindowTitle("Радио панел")
+        self.setStyleSheet(RS_BA1_STYLE)
         self.session = session
         self.loop = loop
         self._last_freq_shown = None
         self._editing_freq = False  # true while the user is mid-typing — don't clobber it on poll
 
         self.freq_edit = QLineEdit()
-        self.freq_edit.setStyleSheet("font-size: 26px; font-weight: bold; font-family: Consolas, monospace;")
+        self.freq_edit.setObjectName("freqDisplay")
+        self.freq_edit.setStyleSheet("font-size: 32px; font-weight: bold; font-family: Consolas, monospace;")
         self.freq_edit.setAlignment(Qt.AlignCenter)
         self.freq_edit.returnPressed.connect(self._on_freq_entered)
         self.freq_edit.textEdited.connect(lambda _: setattr(self, "_editing_freq", True))
@@ -89,21 +128,24 @@ class RadioPanel(QGroupBox):
         mode_row = QHBoxLayout()
         for name in MODE_BUTTONS:
             btn = QPushButton(name)
+            btn.setObjectName("modeBtn")
             btn.setCheckable(True)
             btn.clicked.connect(lambda checked=False, n=name: self._on_mode_clicked(n))
             self.mode_buttons[name] = btn
             mode_row.addWidget(btn)
 
         self.smeter_bar = QProgressBar()
+        self.smeter_bar.setObjectName("smeterBar")
         self.smeter_bar.setRange(0, 255)
         self.smeter_bar.setTextVisible(False)
         self.smeter_value_label = QLabel("—")
-        self.smeter_value_label.setStyleSheet("font-weight: bold;")
+        self.smeter_value_label.setStyleSheet("font-weight: bold; color: #39ff6a;")
 
         band_row = QHBoxLayout()
         self.band_buttons = []
         for name, freq in BAND_DEFAULTS_HZ.items():
             btn = QPushButton(name)
+            btn.setObjectName("bandBtn")
             btn.clicked.connect(lambda checked=False, f=freq: self._set_frequency(f))
             self.band_buttons.append(btn)
             band_row.addWidget(btn)
@@ -120,7 +162,7 @@ class RadioPanel(QGroupBox):
         self.rc28_status_label.setStyleSheet("color: gray; font-size: 11px;")
 
         self.unavailable_label = QLabel(
-            "Няма CI-V адрес за това радио — вграденият панел изисква настроен CI-V адрес в admin панела."
+            "Няма CI-V адрес за това радио — радио панелът изисква настроен CI-V адрес в admin панела."
         )
         self.unavailable_label.setStyleSheet("color: #f59e0b;")
         self.unavailable_label.setWordWrap(True)
@@ -147,6 +189,8 @@ class RadioPanel(QGroupBox):
         rc28_row.addWidget(self.rc28_status_label, 1)
         layout.addLayout(rc28_row)
 
+        self.resize(440, 320)
+
     def eventFilter(self, obj, event):
         # Scroll wheel over the frequency field steps it, same convention
         # as most CAT software's frequency display.
@@ -154,6 +198,19 @@ class RadioPanel(QGroupBox):
             self._step_frequency(1 if event.angleDelta().y() > 0 else -1)
             return True
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        # The window's own [X] closes it like any other window, but this
+        # instance (and its tick()-driven state) lives for the whole
+        # client session — hide instead, so open_or_raise() reopens the
+        # same window instead of needing to rebuild it.
+        event.ignore()
+        self.hide()
+
+    def open_or_raise(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _step_frequency(self, direction: int):
         ctl = self.session.radio_ctl

@@ -48,6 +48,8 @@ class MainWindow(QWidget):
         self.version_label.setStyleSheet("color: gray; font-size: 11px;")
 
         self.radio_panel = RadioPanel(session, loop)
+        self.radio_panel_button = QPushButton("Радио панел")
+        self.radio_panel_button.clicked.connect(self.radio_panel.open_or_raise)
 
         self.ptt_button = QPushButton("PTT (задръж)")
         self.ptt_button.setStyleSheet("font-size: 20px; font-weight: bold; padding: 18px;")
@@ -108,7 +110,7 @@ class MainWindow(QWidget):
         layout.addWidget(QLabel("Радиа"))
         layout.addWidget(self.radio_list)
         layout.addWidget(self.status_label)
-        layout.addWidget(self.radio_panel)
+        layout.addWidget(self.radio_panel_button)
         layout.addWidget(self.ptt_button)
         layout.addWidget(QLabel("Микрофон (вход)"))
         layout.addWidget(self.level_bar)
@@ -288,6 +290,17 @@ class MainWindow(QWidget):
         else:
             self.update_button.setEnabled(True)
             self.update_button.setText("Обнови (грешка, опитай пак)")
+
+    def closeEvent(self, event):
+        # radio_panel is its own top-level window (no parent) — closing
+        # just this one hides it (see RadioPanel.closeEvent), so it never
+        # counts as "closed" on its own. Without this, closing THIS
+        # window while the radio panel happens to be open would leave it
+        # as the last visible top-level widget and Qt would never quit
+        # the app — app.exec() in main.py would just hang forever instead
+        # of reaching session.shutdown().
+        self.radio_panel.hide()
+        super().closeEvent(event)
 
     def _tick(self):
         server_version = self.session.server_version
