@@ -35,6 +35,7 @@
 <button id="addBtn">+ Добави радио</button>
 <button id="checkUpdateBtn" class="secondary">Провери за ъпдейт</button>
 <button id="debugBtn" class="secondary">Debug настройки</button>
+<button id="snifferBtn" class="secondary">Снифър</button>
 <button id="logoutBtn" class="secondary">Изход</button>
 
 <dialog id="debugDialog">
@@ -52,6 +53,28 @@
   <div style="margin-top:1rem; display:flex; gap:.5rem;">
     <button type="button" id="debugApplyBtn">Приложи</button>
     <button type="button" id="debugCloseBtn" class="secondary">Затвори</button>
+  </div>
+</dialog>
+
+<dialog id="snifferDialog" style="width:760px;">
+  <h2>Снифър на сериен порт</h2>
+  <p style="font-size:.8rem; color:#aaa; margin:.2rem 0 0;">
+    За устройства с непознат протокол. Портовете на радиата са заключени — заети са от техните bridge-ове.
+    Всичко се записва и във файл на сървъра, не само тук.
+  </p>
+  <div class="row">
+    <div><label>Порт<select id="sniffPort"></select></label></div>
+    <div><label>Baud<input id="sniffBaud" type="number" value="9600"></label></div>
+  </div>
+  <label>MITM порт — com0com двойка, към която е закачена чуждата програма (по избор)
+    <select id="sniffMitm"></select>
+  </label>
+  <div id="sniffStatus" style="font-size:.85rem; margin-top:.6rem; color:#aaa;"></div>
+  <pre id="sniffOut" style="height:260px; overflow:auto; background:#11151a; border:1px solid #333; border-radius:4px; padding:.5rem; font-size:.75rem; margin-top:.4rem;"></pre>
+  <div style="margin-top:1rem; display:flex; gap:.5rem;">
+    <button type="button" id="sniffStartBtn">Старт</button>
+    <button type="button" id="sniffStopBtn" class="danger">Стоп</button>
+    <button type="button" id="sniffCloseBtn" class="secondary">Затвори</button>
   </div>
 </dialog>
 
@@ -743,6 +766,78 @@ document.getElementById("debugApplyBtn").onclick = async () => {
   }
   await api("/api/debug", { method: "POST", body: JSON.stringify({ root_level: rootLevel, modules }) });
   debugDialog.close();
+};
+
+const snifferDialog = document.getElementById("snifferDialog");
+let sniffTimer = null;
+
+function fillPortOptions(sel, devices, busy, withNone) {
+  sel.innerHTML = "";
+  if (withNone) sel.appendChild(new Option("— без MITM —", ""));
+  for (const d of devices) {
+    const usedBy = busy[d.port.toUpperCase()];
+    const hexId = d.vid ? ` (${d.vid.toString(16).padStart(4, "0")}:${(d.pid || 0).toString(16).padStart(4, "0")})` : "";
+    const opt = new Option(d.port + hexId + (usedBy ? ` — радио ${usedBy}` : ""), d.port);
+    opt.disabled = !!usedBy;
+    sel.appendChild(opt);
+  }
+}
+
+async function refreshSniffer() {
+  const s = await (await api("/api/sniffer")).json();
+  document.getElementById("sniffStatus").textContent = s.running
+    ? `Работи: ${s.port} @ ${s.baud}${s.mitm ? " ↔ " + s.mitm : ""} → ${s.path}`
+    : (s.path ? `Спрян. Последен запис: ${s.path}` : "Спрян.");
+  document.getElementById("sniffStartBtn").disabled = s.running;
+  document.getElementById("sniffStopBtn").disabled = !s.running;
+  const out = document.getElementById("sniffOut");
+  // Не дърпай изгледа надолу, ако админът е скролнал нагоре да чете кадър.
+  const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
+  out.textContent = (s.lines || []).join("\n");
+  if (atBottom) out.scrollTop = out.scrollHeight;
+  return s;
+}
+
+async function openSnifferDialog() {
+  const s = await refreshSniffer();
+  const devices = (await (await api("/api/devices")).json()).serial;
+  fillPortOptions(document.getElementById("sniffPort"), devices, s.busy_ports, false);
+  fillPortOptions(document.getElementById("sniffMitm"), devices, s.busy_ports, true);
+  if (s.running) {
+    document.getElementById("sniffPort").value = s.port;
+    document.getElementById("sniffBaud").value = s.baud;
+    document.getElementById("sniffMitm").value = s.mitm || "";
+  }
+  snifferDialog.showModal();
+  sniffTimer = setInterval(refreshSniffer, 1000);
+}
+
+document.getElementById("snifferBtn").onclick = openSnifferDialog;
+document.getElementById("sniffCloseBtn").onclick = () => {
+  clearInterval(sniffTimer);  // иначе снифърът продължава да се поллва след затваряне
+  sniffTimer = null;
+  snifferDialog.close();
+};
+
+document.getElementById("sniffStartBtn").onclick = async () => {
+  const res = await api("/api/sniffer/start", {
+    method: "POST",
+    body: JSON.stringify({
+      port: document.getElementById("sniffPort").value,
+      baud: Number(document.getElementById("sniffBaud").value),
+      mitm: document.getElementById("sniffMitm").value || null,
+    }),
+  });
+  if (!res.ok) {
+    alert("Грешка: " + JSON.stringify((await res.json()).detail));
+    return;
+  }
+  refreshSniffer();
+};
+
+document.getElementById("sniffStopBtn").onclick = async () => {
+  await api("/api/sniffer/stop", { method: "POST" });
+  refreshSniffer();
 };
 
 async function checkForUpdate() {

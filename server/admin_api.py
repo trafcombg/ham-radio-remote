@@ -30,6 +30,7 @@ from server.device_registry import (
 )
 from server.amplifier_manager import AmplifierManager
 from server.radio_manager import RadioBusyError, RadioManager
+from server.serial_sniffer import SnifferSession
 from server.web_auth import create_session_cookie, read_session_cookie
 
 log = logging.getLogger("admin_api")
@@ -279,6 +280,70 @@ async def get_debug(admin=Depends(require_admin)):
 async def set_debug(body: DebugRequest, admin=Depends(require_admin)):
     debug_logging.apply(body.root_level, body.modules)
     log.info("debug logging: root=%s modules=%s", body.root_level, body.modules)
+    return {"ok": True}
+
+
+class SnifferStartRequest(BaseModel):
+    port: str
+    baud: int = 9600
+    mitm: str | None = None
+
+
+def _ports_in_use(configs: list) -> dict:
+    """Сериен порт -> име на радиото, което го държи. Снифърът не бива да
+    ги пипа: bridge-ът вече ги е отворил, второ отваряне или гърми, или
+    краде CAT връзката на работещо радио."""
+    used = {}
+    for cfg in configs:
+        for section in (cfg.get("cat"), cfg.get("ptt"), cfg.get("cw")):
+            port = (section or {}).get("serial_port")
+            if port:
+                used[port.upper()] = cfg["name"]
+    return used
+
+
+@app.get("/api/sniffer")
+async def sniffer_status(request: Request, tail: int = 200, admin=Depends(require_admin)):
+    """Състояние + последните `tail` реда. Панелът поллва това докато
+    диалогът е отворен — файлът си остава пълният запис."""
+    session = getattr(request.app.state, "sniffer", None)
+    state = session.state() if session else {
+        "running": False, "port": None, "baud": None, "mitm": None, "path": None, "started_at": None,
+    }
+    return {
+        **state,
+        "busy_ports": _ports_in_use(await get_manager(request).list_configs()),
+        "lines": session.tail(tail) if session else [],
+    }
+
+
+@app.post("/api/sniffer/start")
+async def sniffer_start(body: SnifferStartRequest, request: Request, admin=Depends(require_admin)):
+    session = getattr(request.app.state, "sniffer", None)
+    if session and session.running:
+        raise HTTPException(status_code=409, detail="снифърът вече работи — спри го първо")
+    busy = _ports_in_use(await get_manager(request).list_configs())
+    for port in (body.port, body.mitm):
+        if port and port.upper() in busy:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{port} се ползва от радио {busy[port.upper()]} — снифърът е само за други устройства",
+            )
+    session = SnifferSession(body.port, body.baud, body.mitm)
+    try:
+        await session.start()
+    except Exception as e:
+        log.warning("снифърът не успя да отвори %s", body.port, exc_info=True)
+        raise HTTPException(status_code=400, detail=f"не успях да отворя {body.port}: {e}")
+    request.app.state.sniffer = session
+    return session.state()
+
+
+@app.post("/api/sniffer/stop")
+async def sniffer_stop(request: Request, admin=Depends(require_admin)):
+    session = getattr(request.app.state, "sniffer", None)
+    if session:
+        await session.stop()
     return {"ok": True}
 
 
