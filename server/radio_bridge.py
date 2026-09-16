@@ -103,6 +103,7 @@ class RadioBridge:
         self._extra_serials: dict = {}  # port name -> pyserial.Serial, for PTT/CW on a distinct port
         self._test_future = None
         self._cw_release_handle = None
+        self._ptt_release_handle = None  # pending delayed hardware un-key — see PTT_TAIL_MS in _handle_ptt
         self._data_observers: list = []  # extra callbacks fed every CAT byte — e.g. amplifier CAT mirror
         self.amp_fault_check = None      # optional callable() -> bool, set by AmplifierManager when linked
 
@@ -157,6 +158,8 @@ class RadioBridge:
             self.cw_link.close()
         if self._cw_release_handle:
             self._cw_release_handle.cancel()
+        if self._ptt_release_handle:
+            self._ptt_release_handle.cancel()
         for conn in self._extra_serials.values():
             conn.close()
         if self.serial_proto and self.serial_proto.transport:
@@ -300,9 +303,18 @@ class RadioBridge:
                 log.info("PTT ON denied for %s on %s: %s", username, self.name, e)
                 await self._send(writer, {"type": "ptt_denied", "reason": str(e)})
                 return
-            self.ptt_method.set(True)
-            session_id = self.session_ids.get(writer)
-            self.tx_ids[writer] = await self.db.start_transmission(session_id) if session_id is not None else None
+            if self._ptt_release_handle:
+                # Operator keyed up again before a previous release's
+                # audio tail finished draining — the hardware was never
+                # actually un-keyed. Cancel the pending release and keep
+                # the same transmission/tx_id going, instead of a
+                # spurious off-then-on blip and an orphaned db row.
+                self._ptt_release_handle.cancel()
+                self._ptt_release_handle = None
+            else:
+                self.ptt_method.set(True)
+                session_id = self.session_ids.get(writer)
+                self.tx_ids[writer] = await self.db.start_transmission(session_id) if session_id is not None else None
             await self._send(writer, {"type": "ptt_ack", "on": True})
             log.info("PTT ON by %s on %s", username, self.name)
         else:
@@ -310,14 +322,32 @@ class RadioBridge:
                 log.info("PTT OFF from %s on %s ignored — holder is %s", username, self.name, self.arbiter.holder)
                 await self._send(writer, {"type": "ptt_ack", "on": False})
                 return
+            await self._send(writer, {"type": "ptt_ack", "on": False})  # UI feels responsive even if the hardware lingers
+            log.info("PTT OFF (requested) by %s on %s", username, self.name)
+            tail_ms = (self.cfg.get("audio") or {}).get("ptt_tail_ms", 0)
+            if tail_ms > 0:
+                # The audio the operator just spoke is still in flight
+                # (mic buffering -> network -> server playback buffering)
+                # when PTT is released — un-keying immediately clips the
+                # tail of the last word. Hold the radio keyed (and the
+                # channel marked busy, so nobody else jumps in) until
+                # that audio has had time to actually play out.
+                loop = asyncio.get_running_loop()
+                self._ptt_release_handle = loop.call_later(tail_ms / 1000, self._release_ptt, writer, username)
+                return
+            self._release_ptt(writer, username)
+        await self._broadcast_status()
+
+    def _release_ptt(self, writer, username):
+        self._ptt_release_handle = None
+        if self.arbiter.holder == username:
             self.arbiter.release(username)
             self.ptt_method.set(False)
-            tx_id = self.tx_ids.pop(writer, None)
-            if tx_id is not None:
-                await self.db.end_transmission(tx_id)
-            await self._send(writer, {"type": "ptt_ack", "on": False})
-            log.info("PTT OFF by %s on %s", username, self.name)
-        await self._broadcast_status()
+            log.info("PTT OFF (hardware) by %s on %s", username, self.name)
+        tx_id = self.tx_ids.pop(writer, None)
+        if tx_id is not None:
+            asyncio.create_task(self.db.end_transmission(tx_id))
+        asyncio.create_task(self._broadcast_status())
 
     async def _release_if_holder(self, writer, username):
         if self.arbiter.holder == username:
@@ -493,6 +523,41 @@ if __name__ == "__main__":
         assert bridge.arbiter.holder is None, "arbiter never released on PTT-up"
         assert bridge.ptt_method.calls == [True, False], "radio never un-keyed on PTT-up"
 
+    async def _demo_ptt_tail_delay():
+        # PTT off with a configured tail must NOT un-key immediately —
+        # buffered audio (mic -> network -> server playback) needs time
+        # to actually reach the radio before it stops transmitting.
+        bridge = RadioBridge({"name": "TEST", "audio": {"ptt_tail_ms": 50}}, NullDb())
+        bridge.ptt_method = _FakeKey()
+        writer = _FakeWriter()
+
+        await bridge._handle_ptt(writer, "ivan", True)
+        await bridge._handle_ptt(writer, "ivan", False)
+        assert bridge.arbiter.holder == "ivan", "tail delay must keep the channel held, not free it early"
+        assert bridge.ptt_method.calls == [True], "tail delay must not un-key immediately"
+
+        await asyncio.sleep(0.1)  # longer than the 50ms tail
+        assert bridge.arbiter.holder is None, "tail delay never released the channel"
+        assert bridge.ptt_method.calls == [True, False], "tail delay never un-keyed the hardware"
+
+    async def _demo_ptt_tail_cancelled_by_rekey():
+        # Operator releases then keys up again within the tail window —
+        # must not blip the hardware off-then-on, and the later
+        # (cancelled) release must never fire.
+        bridge = RadioBridge({"name": "TEST", "audio": {"ptt_tail_ms": 200}}, NullDb())
+        bridge.ptt_method = _FakeKey()
+        writer = _FakeWriter()
+
+        await bridge._handle_ptt(writer, "ivan", True)
+        await bridge._handle_ptt(writer, "ivan", False)
+        await bridge._handle_ptt(writer, "ivan", True)  # re-key before the 200ms tail elapses
+        assert bridge.ptt_method.calls == [True], "re-keying during the tail must not blip the hardware off"
+        assert bridge.arbiter.holder == "ivan"
+
+        await asyncio.sleep(0.3)  # well past the (cancelled) tail
+        assert bridge.ptt_method.calls == [True], "cancelled tail must not fire a stale release later"
+        assert bridge.arbiter.holder == "ivan", "still transmitting — must still hold the channel"
+
     async def _demo_broadcast_cleans_up_dead_writer():
         # The other half of the same class of bug: _broadcast() (used by
         # every status update, including the keepalive ping) used to just
@@ -566,6 +631,8 @@ if __name__ == "__main__":
     _demo_lazy_keys()
     asyncio.run(_demo())
     asyncio.run(_demo_ptt_release())
+    asyncio.run(_demo_ptt_tail_delay())
+    asyncio.run(_demo_ptt_tail_cancelled_by_rekey())
     asyncio.run(_demo_broadcast_cleans_up_dead_writer())
     asyncio.run(_demo_silent_disconnect())
     asyncio.run(_demo_authorize())

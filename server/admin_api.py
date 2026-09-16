@@ -111,6 +111,7 @@ class RadioAudioConfig(BaseModel):
     output_gain: float = 1.0
     codec: Literal["pcm16", "ulaw", "opus"] = "pcm16"
     sample_rate: Literal[48000, 24000, 16000, 8000] = 48000
+    ptt_tail_ms: int = 0  # keep the radio keyed this long after PTT off, so buffered audio finishes playing
 
 
 class RadioPttConfig(BaseModel):

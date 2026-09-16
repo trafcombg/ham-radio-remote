@@ -288,9 +288,16 @@ class AudioLink:
             self._announce_timer.cancel()
             self._announce_timer = None
         if self._in_stream:
-            self._in_stream.stop()
+            # close(), not stop(): stop() leaves the device allocated —
+            # a new AudioLink opening the same physical device right
+            # after (exactly what happens when the server reconfigures a
+            # radio's codec/sample_rate and the client rebuilds live)
+            # raced against the still-held device and came out as
+            # crackling/garbled audio until the whole process restarted
+            # and force-released it.
+            self._in_stream.close()
         if self._out_stream:
-            self._out_stream.stop()
+            self._out_stream.close()
         self.sock.close()
 
 

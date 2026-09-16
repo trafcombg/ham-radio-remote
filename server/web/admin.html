@@ -121,6 +121,9 @@
         </select>
       </label></div>
     </div>
+    <label>PTT опашка (ms) — колко да остане радиото включено след PTT off, за да не се отреже последното от звука
+      <input name="ptt_tail_ms" type="number" min="0" step="10" value="0">
+    </label>
     <label>PTT метод
       <select name="ptt_method">
         <option value="civ">CAT команда (CI-V)</option>
@@ -376,6 +379,7 @@ async function openEdit(r) {
     syncGainOutputs();
     form.audio_codec.value = r.audio.codec || "pcm16";
     form.audio_sample_rate.value = r.audio.sample_rate || 48000;
+    form.ptt_tail_ms.value = r.audio.ptt_tail_ms || 0;
     form.ptt_method.value = r.ptt.method;
     form.civ_address.value = r.ptt.civ_address != null ? r.ptt.civ_address.toString(16) : "";
     form.ptt_serial_port.value = r.ptt.serial_port || "";
@@ -415,6 +419,7 @@ function formToCfg() {
       output_gain: parseFloat(f.get("audio_output_gain")) || 1.0,
       codec: f.get("audio_codec") || "pcm16",
       sample_rate: parseInt(f.get("audio_sample_rate")) || 48000,
+      ptt_tail_ms: parseInt(f.get("ptt_tail_ms")) || 0,
     },
     cw_udp_port: parseInt(f.get("cw_udp_port")),
     ptt: {
