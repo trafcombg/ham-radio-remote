@@ -34,6 +34,8 @@ BAND_DEFAULTS_HZ = {
 
 MODE_BUTTONS = ["LSB", "USB", "CW", "AM", "FM", "RTTY"]
 
+_UNSET = object()  # sentinel — see RadioPanel._last_freq_shown
+
 
 def format_frequency(freq_hz: int | None) -> str:
     if freq_hz is None:
@@ -102,7 +104,13 @@ class RadioPanel(QWidget):
         self.setStyleSheet(RS_BA1_STYLE)
         self.session = session
         self.loop = loop
-        self._last_freq_shown = None
+        # Sentinel, not None: ctl.frequency_hz also STARTS as None (no
+        # reply yet), so a plain None-vs-None comparison here would never
+        # be true on the very first tick and the "— . — — — . — — —"
+        # waiting placeholder would never actually render — the box would
+        # just sit empty (indistinguishable from "broken") until the
+        # radio's first real reply arrived.
+        self._last_freq_shown = _UNSET
         self._editing_freq = False  # true while the user is mid-typing — don't clobber it on poll
 
         self.freq_edit = QLineEdit()
@@ -309,7 +317,7 @@ class RadioPanel(QWidget):
             self.rc28_status_label.setText(self.session.rc28_error)
             self.rc28_status_label.setStyleSheet("color: #ef4444; font-size: 11px;")
         elif self.session.rc28:
-            self.rc28_status_label.setText("активен")
+            self.rc28_status_label.setText(f"активен — {self.session.radio_name}")
             self.rc28_status_label.setStyleSheet("color: #34d399; font-size: 11px;")
         elif self.rc28_checkbox.isChecked():
             self.rc28_status_label.setText("свързване...")
@@ -356,4 +364,28 @@ if __name__ == "__main__":
     assert smeter_label(241) == "S9+60"
     assert smeter_label(191) == "S9+30"
 
-    print("radio_panel.py: ok (pure-logic checks only — Qt widget construction needs a QApplication)")
+    # Reproduces the report: freq_edit sat completely blank (not even the
+    # waiting placeholder) even though the CI-V address was configured and
+    # controls were enabled — the None-vs-None sentinel bug above.
+    from PySide6.QtWidgets import QApplication
+
+    class _FakeCtl:
+        frequency_hz = None
+        mode = None
+        filter_num = None
+        smeter = None
+
+    class _FakeSession:
+        app_cfg = {"rc28": {"enabled": False}}
+        radio_ctl = _FakeCtl()
+        radio_name = "TEST"
+        rc28 = None
+        rc28_error = None
+        antenna_switches = []
+
+    app = QApplication.instance() or QApplication([])
+    panel = RadioPanel(_FakeSession(), loop=None)
+    panel.tick()
+    assert panel.freq_edit.text() == format_frequency(None), "waiting placeholder never rendered on first tick"
+
+    print("radio_panel.py: ok")

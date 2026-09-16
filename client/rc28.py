@@ -16,7 +16,7 @@ this and a working driver.
 import asyncio
 import logging
 
-from common.civ import parse_frequency_reply, set_frequency_command
+from common.civ import extract_frames, parse_frequency_reply, set_frequency_command
 
 log = logging.getLogger("rc28")
 
@@ -51,13 +51,17 @@ class Rc28Driver:
         self.step_hz = step_hz
         self.current_freq_hz = None
         self._stopped = False
+        self._buf = bytearray()
 
     def on_cat_reply(self, data: bytes):
-        """Feed this from ComRelay.on_cat_data to keep our frequency
-        baseline in sync with whatever the radio last reported."""
-        freq = parse_frequency_reply(data)
-        if freq is not None:
-            self.current_freq_hz = freq
+        """Feed this from ComRelay.add_cat_listener to keep our frequency
+        baseline in sync with whatever the radio last reported. A single
+        reply can arrive split across multiple calls (slow serial reads
+        don't land on frame boundaries) — extract_frames() reassembles it."""
+        for frame in extract_frames(self._buf, data):
+            freq = parse_frequency_reply(frame)
+            if freq is not None:
+                self.current_freq_hz = freq
 
     async def handle_report(self, report: bytes):
         parsed = parse_report(report)
@@ -108,6 +112,12 @@ if __name__ == "__main__":
     assert apply_dial_delta(14250000, -3, 10) == 14249970
     assert parse_report(b"\x01\x05\x00") == {"dial_delta": 5, "buttons": 0}
     assert parse_report(b"\x01\xfb\x00") == {"dial_delta": -5, "buttons": 0}  # 0xfb = -5 signed
+
+    driver = Rc28Driver(None, 0x94)
+    freq_reply = b"\xfe\xfe\xe0\x94\x03\x00\x00\x25\x14\x00\xfd"
+    driver.on_cat_reply(freq_reply[:4])
+    driver.on_cat_reply(freq_reply[4:])
+    assert driver.current_freq_hz == 14250000, "fragmented reply was never reassembled"
 
     class _FakeHidDevice:
         """Enough of hidapi's nonblocking device surface for _poll_loop —

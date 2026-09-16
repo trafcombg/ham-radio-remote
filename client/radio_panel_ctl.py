@@ -13,7 +13,7 @@ import asyncio
 import logging
 
 from common.civ import (
-    get_frequency_command, get_mode_command, get_smeter_command,
+    extract_frames, get_frequency_command, get_mode_command, get_smeter_command,
     parse_frequency_reply, parse_mode_reply, parse_smeter_reply,
     set_frequency_command, set_mode_command,
 )
@@ -31,21 +31,28 @@ class RadioPanelController:
         self.mode = None        # Icom mode byte — see common.civ.MODE_NAMES
         self.filter_num = None
         self.smeter = None      # raw 0-255 CI-V meter reading
+        self._buf = bytearray()
 
     def on_cat_reply(self, data: bytes):
         """Feed this from ComRelay.add_cat_listener to keep our state in
         sync with whatever the radio last reported — including replies
         to our own polls below, and anything a third-party CAT app
-        sharing the same passthrough triggers."""
-        freq = parse_frequency_reply(data)
+        sharing the same passthrough triggers. A single reply can arrive
+        split across multiple calls (slow serial reads don't land on
+        frame boundaries) — extract_frames() reassembles it."""
+        for frame in extract_frames(self._buf, data):
+            self._handle_frame(frame)
+
+    def _handle_frame(self, frame: bytes):
+        freq = parse_frequency_reply(frame)
         if freq is not None:
             self.frequency_hz = freq
             return
-        mode = parse_mode_reply(data)
+        mode = parse_mode_reply(frame)
         if mode is not None:
             self.mode, self.filter_num = mode
             return
-        meter = parse_smeter_reply(data)
+        meter = parse_smeter_reply(frame)
         if meter is not None:
             self.smeter = meter
 
@@ -94,6 +101,14 @@ if __name__ == "__main__":
 
     ctl.on_cat_reply(b"garbage")  # must not raise, and must not touch existing state
     assert ctl.frequency_hz == 14250000
+
+    # A reply split across several reads — the exact failure mode a slow
+    # serial read produces on real hardware — must still be recognized.
+    ctl2 = RadioPanelController(fake_send, 0x94)
+    ctl2.on_cat_reply(mode_reply[:3])
+    ctl2.on_cat_reply(mode_reply[3:6])
+    ctl2.on_cat_reply(mode_reply[6:])
+    assert ctl2.mode == 0x01 and ctl2.filter_num == 1, "fragmented reply was never reassembled"
 
     asyncio.run(ctl.set_frequency(7000000))
     assert ctl.frequency_hz == 7000000

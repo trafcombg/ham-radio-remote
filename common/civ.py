@@ -62,6 +62,34 @@ def parse_frequency_reply(data: bytes) -> int | None:
     return int("".join(reversed(pairs)))
 
 
+def extract_frames(buffer: bytearray, data: bytes) -> list[bytes]:
+    """Feeds raw bytes from a CAT stream into `buffer` and pulls out zero
+    or more complete FE FE ... FD frames. A serial/TCP read is NOT
+    guaranteed to land on frame boundaries — a single CI-V reply can
+    arrive split across several reads (slow baud rate, USB-serial chip
+    buffering), or several replies can arrive coalesced in one read — so
+    callers that parse a raw chunk directly (exact-length checks like
+    parse_frequency_reply) silently miss any reply that isn't lucky
+    enough to arrive as one whole chunk. `buffer` is mutated/trimmed in
+    place so the next call picks up exactly where this one left off;
+    leading bytes before the first FE FE (noise, or a frame this radio's
+    address doesn't own) are dropped, not queued forever."""
+    buffer.extend(data)
+    frames = []
+    while True:
+        start = buffer.find(PREAMBLE)
+        if start == -1:
+            buffer.clear()
+            break
+        end = buffer.find(END, start)
+        if end == -1:
+            del buffer[:start]  # keep the partial frame, wait for more
+            break
+        frames.append(bytes(buffer[start:end + 1]))
+        del buffer[:end + 1]
+    return frames
+
+
 def get_mode_command(civ_address: int) -> bytes:
     return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x04" + END
 
@@ -127,5 +155,26 @@ if __name__ == "__main__":
     assert parse_smeter_reply(b"\xfe\xfe\xe0\x94\x15\x02\x01\x40\xfd") == 140
     assert parse_smeter_reply(b"\xfe\xfe\xe0\x94\x15\x02\x02\x41\xfd") == 241  # S9+60
     assert parse_smeter_reply(b"garbage") is None
+
+    freq_frame = b"\xfe\xfe\xe0\x94\x03\x00\x00\x25\x14\x00\xfd"
+    buf = bytearray()
+    assert extract_frames(buf, freq_frame) == [freq_frame]
+    assert buf == bytearray()  # fully consumed, nothing left dangling
+
+    # Split across three reads, at arbitrary byte boundaries — the exact
+    # failure mode a slow/chunked serial read produces on real hardware.
+    buf = bytearray()
+    assert extract_frames(buf, freq_frame[:3]) == []
+    assert extract_frames(buf, freq_frame[3:7]) == []
+    assert extract_frames(buf, freq_frame[7:]) == [freq_frame]
+
+    # Two replies coalesced into a single read.
+    buf = bytearray()
+    mode_frame = b"\xfe\xfe\xe0\x94\x04\x01\x01\xfd"
+    assert extract_frames(buf, freq_frame + mode_frame) == [freq_frame, mode_frame]
+
+    # Noise before a real frame must be dropped, not queued forever.
+    buf = bytearray()
+    assert extract_frames(buf, b"\x00\x01" + freq_frame) == [freq_frame]
 
     print("civ.py: ok")
