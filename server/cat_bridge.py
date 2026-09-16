@@ -43,9 +43,15 @@ async def open_serial(serial_port: str, baud: int) -> SerialRelay:
     return proto
 
 
-async def make_cat_server(serial_proto: SerialRelay, tcp_host: str, tcp_port: int) -> asyncio.Server:
+async def make_cat_server(serial_proto: SerialRelay, tcp_host: str, tcp_port: int, on_write=None) -> asyncio.Server:
     """Creates and binds the CAT TCP server; caller runs serve_forever()
-    and can later call .close() on the returned server to shut it down."""
+    and can later call .close() on the returned server to shut it down.
+
+    `on_write`: optional async callable(data: bytes), called instead of
+    writing straight to the serial port — lets the caller intercept
+    specific commands (radio_bridge.py delays a CI-V PTT-off frame here
+    for the same audio-tail reason as PTT sent from the client itself)
+    while every other byte still passes through unmodified."""
 
     async def handle_client(reader, writer):
         peer = writer.get_extra_info("peername")
@@ -60,7 +66,10 @@ async def make_cat_server(serial_proto: SerialRelay, tcp_host: str, tcp_port: in
                 if serial_proto.transport is None:
                     log.warning("CAT data from %s dropped — serial connection isn't up", peer)
                     continue
-                serial_proto.transport.write(data)
+                if on_write:
+                    await on_write(data)
+                else:
+                    serial_proto.transport.write(data)
         except ConnectionResetError:
             pass
         finally:

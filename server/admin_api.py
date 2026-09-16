@@ -383,6 +383,7 @@ async def list_client_radios(request: Request):
                 "codec": c["audio"].get("codec", "pcm16"),
                 "sample_rate": c["audio"].get("sample_rate", 48000),
                 "civ_address": (c.get("ptt") or {}).get("civ_address"),
+                "ptt_method": (c.get("ptt") or {}).get("method"),
             }
             for c in configs
         ]

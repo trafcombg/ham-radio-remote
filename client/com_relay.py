@@ -32,6 +32,7 @@ class ComRelay:
         self.writer = None
         self.serial = None
         self.on_cat_data = None  # optional callable(bytes) — e.g. RC-28 watching for frequency replies
+        self.on_line_state_change = None  # optional callable(cts, dsr) — external RTS/DTR PTT, see session.py
 
     async def run(self):
         self.serial = serial.Serial(self.com_port, self.baud, timeout=0)
@@ -60,7 +61,14 @@ class ComRelay:
                 self.serial = None
 
     async def _pump_serial_to_tcp(self):
+        # ponytail: assumes com0com's default pair setup cross-wires
+        # RTS<->CTS and DTR<->DSR between the two halves, same as a real
+        # null-modem cable — not verified against an actual installed
+        # driver. If a real setup doesn't cross-wire this, external
+        # RTS/DTR PTT detection just never fires; CI-V PTT (see
+        # radio_bridge._on_external_cat_write) is unaffected either way.
         loop = asyncio.get_running_loop()
+        last_lines = None
         while True:
             data = await loop.run_in_executor(None, self.serial.read, 256)
             if data:
@@ -69,6 +77,11 @@ class ComRelay:
                 await self.writer.drain()
             else:
                 await asyncio.sleep(0.01)
+            lines = (self.serial.cts, self.serial.dsr)
+            if lines != last_lines:
+                last_lines = lines
+                if self.on_line_state_change:
+                    self.on_line_state_change(*lines)
 
     async def _pump_tcp_to_serial(self, reader):
         while True:
@@ -116,5 +129,35 @@ if __name__ == "__main__":
             assert asyncio.get_event_loop().time() - start < 1.0
             writer.close()
 
+    async def _demo_line_state_change():
+        # A third-party CAT app toggles RTS on the exposed com0com port —
+        # this (internal) port sees it as a CTS change and must report it
+        # via on_line_state_change, independent of any CAT data flowing.
+        class _FakeSerial:
+            def __init__(self):
+                self.cts = False
+                self.dsr = False
+
+            def read(self, n):
+                return b""
+
+        relay = ComRelay("COM_FAKE", 19200, "127.0.0.1", 0)
+        relay.serial = _FakeSerial()
+        relay.writer = mock.Mock()
+        changes = []
+        relay.on_line_state_change = lambda cts, dsr: changes.append((cts, dsr))
+
+        task = asyncio.create_task(relay._pump_serial_to_tcp())
+        await asyncio.sleep(0.03)
+        relay.serial.cts = True
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert (False, False) in changes, f"initial line state never reported: {changes}"
+        assert (True, False) in changes, f"CTS change never reported: {changes}"
+
     asyncio.run(_demo_idle_timeout())
+    asyncio.run(_demo_line_state_change())
     print("com_relay.py: ok")

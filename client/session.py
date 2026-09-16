@@ -265,6 +265,9 @@ class RadioSession:
                 com_ports[name] = mapping
                 changed = True
             relay = ComRelay(mapping["internal"], self.app_cfg["com"].get("baud", 19200), self.server_host, radio["cat_port"])
+            relay.on_line_state_change = lambda cts, dsr, name=name, method=radio.get("ptt_method"): asyncio.create_task(
+                self._handle_external_line_state(name, method, cts, dsr)
+            )
             self.cat_relays[name] = relay
             self._cat_tasks[name] = asyncio.create_task(_run_cat_relay_forever(relay))
 
@@ -274,6 +277,23 @@ class RadioSession:
     def _save_config(self):
         if self.config_path:
             self.config_path.write_text(json.dumps(self.app_cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    async def _handle_external_line_state(self, radio_name: str, ptt_method: str | None, cts: bool, dsr: bool):
+        """A third-party CAT app on this radio's exposed com0com port just
+        toggled RTS or DTR (relayed here from ComRelay as a CTS/DSR change
+        on our internal port). Only the line this radio is actually
+        configured to key PTT with matters — relay that one over whichever
+        control connection for this radio is up (status watcher if it's
+        not the selected radio, same connection either way)."""
+        if ptt_method == "rts":
+            on = cts
+        elif ptt_method == "dtr":
+            on = dsr
+        else:
+            return
+        client = self.status_clients.get(radio_name)
+        if client:
+            await client.notify_external_ptt(on)
 
     def radio_status(self, name: str):
         client = self.status_clients.get(name)
@@ -487,7 +507,41 @@ if __name__ == "__main__":
         await session._handle_reconfigured("STALE")
         assert session.radio_name == "CURRENT"
 
+    async def _demo_external_line_state():
+        # RTS/DTR PTT from a third-party CAT app must only be forwarded
+        # for the line this radio's ptt_method actually uses, and must go
+        # out over that radio's control connection (status_clients), not
+        # get dropped just because it's not the currently-selected radio.
+        class _FakeControlClient:
+            def __init__(self):
+                self.calls = []
+
+            async def notify_external_ptt(self, on):
+                self.calls.append(on)
+
+        session = RadioSession({"username": "t", "server_host": "127.0.0.1", "com": {"baud": 19200}})
+        rts_client = _FakeControlClient()
+        session.status_clients = {"RTS-RADIO": rts_client}
+
+        await session._handle_external_line_state("RTS-RADIO", "rts", True, False)
+        assert rts_client.calls == [True], "RTS PTT-on never relayed"
+        await session._handle_external_line_state("RTS-RADIO", "rts", False, True)  # DSR change must be ignored for an rts radio
+        assert rts_client.calls == [True, False]
+
+        dtr_client = _FakeControlClient()
+        session.status_clients = {"DTR-RADIO": dtr_client}
+        await session._handle_external_line_state("DTR-RADIO", "dtr", True, False)  # CTS=True must be ignored — dsr is what a dtr radio uses
+        assert dtr_client.calls == [False]
+        await session._handle_external_line_state("DTR-RADIO", "dtr", False, True)
+        assert dtr_client.calls == [False, True]
+
+        civ_client = _FakeControlClient()
+        session.status_clients = {"CIV-RADIO": civ_client}
+        await session._handle_external_line_state("CIV-RADIO", "civ", True, True)
+        assert civ_client.calls == [], "civ radios key PTT via CAT bytes, not line state"
+
     asyncio.run(_demo())
     asyncio.run(_demo_reconnect())
     asyncio.run(_demo_reconfigured_ignores_stale_radio())
+    asyncio.run(_demo_external_line_state())
     print("session.py: ok")

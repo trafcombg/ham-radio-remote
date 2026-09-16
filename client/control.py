@@ -78,6 +78,13 @@ class ControlClient:
     async def request_ptt(self, on: bool):
         await self._send({"type": "ptt", "on": on})
 
+    async def notify_external_ptt(self, on: bool):
+        """A third-party CAT app toggled PTT via RTS/DTR on this radio's
+        exposed com0com port — relayed here by ComRelay's line-state
+        watcher so the server can apply the same audio-tail delay it gives
+        our own PTT. See radio_bridge._handle_external_ptt."""
+        await self._send({"type": "external_ptt", "on": on})
+
     async def _send(self, obj):
         if self.writer:
             self.writer.write((json.dumps(obj) + "\n").encode())

@@ -2,11 +2,21 @@
 PTT arbitration + status broadcast), the audio link, PTT keying, and CW
 keying.
 
-PTT is deliberately NOT sniffed out of the raw CAT byte stream: RTS/DTR
-keying isn't CAT data at all (it's a serial control line), and arbitration
-has to happen before the physical action, not after. So PTT is its own
-small JSON-lines control connection, separate from the CAT passthrough
-that third-party software (WSJT-X etc.) uses transparently.
+PTT from the CLIENT is deliberately NOT sniffed out of the raw CAT byte
+stream: RTS/DTR keying isn't CAT data at all (it's a serial control line),
+and arbitration has to happen before the physical action, not after. So
+client PTT is its own small JSON-lines control connection, separate from
+the CAT passthrough that third-party software (WSJT-X etc.) uses
+transparently.
+
+PTT issued by that third-party software itself — not our client — is a
+different story: it never goes through arbitration (there's no logged-in
+user to arbitrate, same as today), but it DOES get the same audio-tail
+delay as client PTT (see _on_external_cat_write / _handle_external_ptt),
+so a CAT app's own PTT-off doesn't clip the last of the audio either. CI-V
+PTT is recognized directly in the CAT byte stream; RTS/DTR PTT has no
+bytes to inspect, so the client relays line-state changes on its exposed
+com0com port over the same control connection (see client/com_relay.py).
 
 CW keying reuses the exact same physical actions as PTT (CivKey/LineKey —
 for most Icom rigs, CW keying via CAT/key-line IS just the transmit
@@ -28,7 +38,7 @@ import logging
 import serial
 
 from common.audio_io import AudioLink
-from common.civ import ptt_command
+from common.civ import parse_ptt_command, ptt_command
 from common.control_protocol import KEEPALIVE_INTERVAL_S as CONTROL_KEEPALIVE_INTERVAL_S
 from common.control_protocol import READ_TIMEOUT_S as CONTROL_READ_TIMEOUT_S
 from common.cw_link import CwLink
@@ -104,6 +114,7 @@ class RadioBridge:
         self._test_future = None
         self._cw_release_handle = None
         self._ptt_release_handle = None  # pending delayed hardware un-key — see PTT_TAIL_MS in _handle_ptt
+        self._external_ptt_release_handle = None  # same, for PTT from a third-party CAT app — see _on_external_cat_write / _handle_external_ptt
         self._data_observers: list = []  # extra callbacks fed every CAT byte — e.g. amplifier CAT mirror
         self.amp_fault_check = None      # optional callable() -> bool, set by AmplifierManager when linked
 
@@ -130,7 +141,7 @@ class RadioBridge:
         asyncio.get_running_loop().add_reader(self.cw_link.sock.fileno(), self._on_cw_readable)
 
         host = self.cfg["cat"].get("tcp_host", "0.0.0.0")
-        self._cat_server = await make_cat_server(self.serial_proto, host, self.cfg["cat"]["tcp_port"])
+        self._cat_server = await make_cat_server(self.serial_proto, host, self.cfg["cat"]["tcp_port"], on_write=self._on_external_cat_write)
         self._control_server = await asyncio.start_server(self._handle_control_client, host, self.cfg["control_port"])
         self._keepalive_task = asyncio.create_task(self._control_keepalive_loop())
         log.info(
@@ -160,6 +171,8 @@ class RadioBridge:
             self._cw_release_handle.cancel()
         if self._ptt_release_handle:
             self._ptt_release_handle.cancel()
+        if self._external_ptt_release_handle:
+            self._external_ptt_release_handle.cancel()
         for conn in self._extra_serials.values():
             conn.close()
         if self.serial_proto and self.serial_proto.transport:
@@ -269,6 +282,8 @@ class RadioBridge:
                     await self._broadcast_status()
                 elif msg["type"] == "ptt" and username:
                     await self._handle_ptt(writer, username, msg["on"])
+                elif msg["type"] == "external_ptt" and username:
+                    self._handle_external_ptt(msg["on"])
                 elif msg["type"] == "ping":
                     pass  # just proof of life — see CONTROL_READ_TIMEOUT_S above
         except (ConnectionResetError, json.JSONDecodeError):
@@ -348,6 +363,56 @@ class RadioBridge:
         if tx_id is not None:
             asyncio.create_task(self.db.end_transmission(tx_id))
         asyncio.create_task(self._broadcast_status())
+
+    async def _on_external_cat_write(self, data: bytes):
+        """Every CAT byte a third-party app sends through the passthrough
+        (server/cat_bridge.py's on_write hook) comes through here first.
+        Only a CI-V PTT-off frame addressed to this radio gets held back —
+        same ptt_tail_ms as our own PTT, same reason (buffered audio still
+        in flight). Everything else, including PTT-on, is forwarded at
+        once; a radio not using CI-V PTT has no civ_address configured and
+        this is a no-op passthrough."""
+        civ_address = (self.cfg.get("ptt") or {}).get("civ_address")
+        tail_ms = (self.cfg.get("audio") or {}).get("ptt_tail_ms", 0)
+        if civ_address is not None and tail_ms > 0:
+            ptt_state = parse_ptt_command(data, civ_address)
+            if ptt_state is False:
+                if self._external_ptt_release_handle:
+                    self._external_ptt_release_handle.cancel()
+                loop = asyncio.get_running_loop()
+                self._external_ptt_release_handle = loop.call_later(tail_ms / 1000, self._forward_external_cat, data)
+                return
+            if ptt_state is True and self._external_ptt_release_handle:
+                self._external_ptt_release_handle.cancel()
+                self._external_ptt_release_handle = None
+        self._forward_external_cat(data)
+
+    def _forward_external_cat(self, data: bytes):
+        self._external_ptt_release_handle = None
+        if self.serial_proto.transport:
+            self.serial_proto.transport.write(data)
+
+    def _handle_external_ptt(self, on: bool):
+        """RTS/DTR PTT toggled by a third-party CAT app on the client's
+        exposed com0com port, relayed here by ComRelay's line-state watcher
+        (client/com_relay.py) — no CAT bytes to hold back for this method,
+        so it keys ptt_method directly, with the same tail delay."""
+        tail_ms = (self.cfg.get("audio") or {}).get("ptt_tail_ms", 0)
+        if on:
+            if self._external_ptt_release_handle:
+                self._external_ptt_release_handle.cancel()
+                self._external_ptt_release_handle = None
+            else:
+                self.ptt_method.set(True)
+        elif tail_ms > 0:
+            loop = asyncio.get_running_loop()
+            self._external_ptt_release_handle = loop.call_later(tail_ms / 1000, self._release_external_ptt)
+        else:
+            self.ptt_method.set(False)
+
+    def _release_external_ptt(self):
+        self._external_ptt_release_handle = None
+        self.ptt_method.set(False)
 
     async def _release_if_holder(self, writer, username):
         if self.arbiter.holder == username:
@@ -558,6 +623,70 @@ if __name__ == "__main__":
         assert bridge.ptt_method.calls == [True], "cancelled tail must not fire a stale release later"
         assert bridge.arbiter.holder == "ivan", "still transmitting — must still hold the channel"
 
+    class _FakeTransport:
+        def __init__(self):
+            self.written = []
+
+        def write(self, data):
+            self.written.append(data)
+
+    class _FakeSerialProto:
+        def __init__(self):
+            self.transport = _FakeTransport()
+
+    async def _demo_external_civ_ptt_tail_delay():
+        # A third-party CAT app (WSJT-X etc.) sends its own CI-V PTT
+        # off/on through the passthrough — the off frame must be delayed
+        # by ptt_tail_ms just like client-originated PTT, and a re-key
+        # before the tail elapses must cancel the pending release rather
+        # than blip the radio off-then-on.
+        bridge = RadioBridge({"name": "TEST", "ptt": {"method": "civ", "civ_address": 0x94}, "audio": {"ptt_tail_ms": 50}}, NullDb())
+        bridge.serial_proto = _FakeSerialProto()
+
+        on_frame = ptt_command(0x94, True)
+        off_frame = ptt_command(0x94, False)
+
+        await bridge._on_external_cat_write(on_frame)
+        assert bridge.serial_proto.transport.written == [on_frame], "PTT-on must pass through immediately"
+
+        await bridge._on_external_cat_write(off_frame)
+        assert bridge.serial_proto.transport.written == [on_frame], "PTT-off must be held back for the tail"
+
+        await asyncio.sleep(0.1)  # longer than the 50ms tail
+        assert bridge.serial_proto.transport.written == [on_frame, off_frame], "delayed PTT-off never forwarded"
+
+        # re-key during the tail must cancel the pending off, not blip it
+        await bridge._on_external_cat_write(off_frame)
+        await bridge._on_external_cat_write(on_frame)
+        await asyncio.sleep(0.1)
+        assert bridge.serial_proto.transport.written == [on_frame, off_frame, on_frame], "re-key during tail must cancel the stale release"
+
+        # non-PTT CAT traffic (e.g. a frequency query) always passes straight through
+        other = b"\xfe\xfe\x94\xe0\x03\xfd"
+        await bridge._on_external_cat_write(other)
+        assert bridge.serial_proto.transport.written[-1] == other
+
+    async def _demo_external_rts_ptt_tail_delay():
+        # Same tail-delay contract, but via the RTS/DTR line-state path
+        # (no CAT bytes involved — see client/com_relay.py's line watcher).
+        bridge = RadioBridge({"name": "TEST", "audio": {"ptt_tail_ms": 50}}, NullDb())
+        bridge.ptt_method = _FakeKey()
+
+        bridge._handle_external_ptt(True)
+        assert bridge.ptt_method.calls == [True]
+
+        bridge._handle_external_ptt(False)
+        assert bridge.ptt_method.calls == [True], "tail delay must not un-key immediately"
+
+        await asyncio.sleep(0.1)
+        assert bridge.ptt_method.calls == [True, False]
+
+        bridge._handle_external_ptt(True)
+        bridge._handle_external_ptt(False)
+        bridge._handle_external_ptt(True)  # re-key before the tail elapses
+        await asyncio.sleep(0.1)
+        assert bridge.ptt_method.calls == [True, False, True], "re-key during tail must not blip the hardware off"
+
     async def _demo_broadcast_cleans_up_dead_writer():
         # The other half of the same class of bug: _broadcast() (used by
         # every status update, including the keepalive ping) used to just
@@ -633,6 +762,8 @@ if __name__ == "__main__":
     asyncio.run(_demo_ptt_release())
     asyncio.run(_demo_ptt_tail_delay())
     asyncio.run(_demo_ptt_tail_cancelled_by_rekey())
+    asyncio.run(_demo_external_civ_ptt_tail_delay())
+    asyncio.run(_demo_external_rts_ptt_tail_delay())
     asyncio.run(_demo_broadcast_cleans_up_dead_writer())
     asyncio.run(_demo_silent_disconnect())
     asyncio.run(_demo_authorize())
