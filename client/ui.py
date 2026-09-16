@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from client import credential_store
 from client.debug_dialog import DebugDialog
+from client.radio_panel import RadioPanel
 from client.settings_dialog import SettingsDialog
 from common.app_paths import app_dir
 from common.updater import check_for_update, download_and_run_installer
@@ -45,6 +46,8 @@ class MainWindow(QWidget):
         self.status_label = QLabel("Свързване...")
         self.version_label = QLabel(f"Клиент v{APP_VERSION}")
         self.version_label.setStyleSheet("color: gray; font-size: 11px;")
+
+        self.radio_panel = RadioPanel(session, loop)
 
         self.ptt_button = QPushButton("PTT (задръж)")
         self.ptt_button.setStyleSheet("font-size: 20px; font-weight: bold; padding: 18px;")
@@ -105,6 +108,7 @@ class MainWindow(QWidget):
         layout.addWidget(QLabel("Радиа"))
         layout.addWidget(self.radio_list)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.radio_panel)
         layout.addWidget(self.ptt_button)
         layout.addWidget(QLabel("Микрофон (вход)"))
         layout.addWidget(self.level_bar)
@@ -295,6 +299,7 @@ class MainWindow(QWidget):
             self.version_label.setStyleSheet("color: gray; font-size: 11px;")
 
         self._refresh_amplifier_panel()
+        self.radio_panel.tick()
 
         if self.update_state and self.update_state.available and not self.update_button.isVisible():
             self.update_button.setText(f"Налична версия {self.update_state.available['version']} — Обнови")

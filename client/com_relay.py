@@ -5,7 +5,8 @@ N1MM+, fldigi) opens. PTT does NOT go through here — see control.py —
 because arbitration has to see it before it reaches the radio. Plain CAT
 traffic (e.g. RC-28's frequency-change commands, see client/rc28.py) is
 not arbitrated — it's the same kind of command any CAT app already sends
-through this tunnel — so send_cat()/on_cat_data write/observe it directly.
+through this tunnel — so send_cat()/cat_listeners write/observe it
+directly.
 """
 
 import asyncio
@@ -31,7 +32,10 @@ class ComRelay:
         self.server_port = server_port
         self.writer = None
         self.serial = None
-        self.on_cat_data = None  # optional callable(bytes) — e.g. RC-28 watching for frequency replies
+        # Multiple independent consumers watch CAT replies at once now —
+        # RC-28 (frequency deltas) and the built-in radio panel
+        # (frequency/mode/S-meter) can both be active on the same radio.
+        self.cat_listeners: list = []
         self.on_line_state_change = None  # optional callable(cts, dsr) — external RTS/DTR PTT, see session.py
 
     async def run(self):
@@ -95,13 +99,23 @@ class ComRelay:
                 break
             log.debug("server -> %s: %s", self.com_port, data.hex())
             self.serial.write(data)
-            if self.on_cat_data:
-                self.on_cat_data(data)
+            for listener in self.cat_listeners:
+                listener(data)
 
     async def send_cat(self, data: bytes):
         if self.writer:
             self.writer.write(data)
             await self.writer.drain()
+
+    def add_cat_listener(self, callback):
+        self.cat_listeners.append(callback)
+
+    def remove_cat_listener(self, callback):
+        if callback in self.cat_listeners:
+            self.cat_listeners.remove(callback)
+
+    def clear_cat_listeners(self):
+        self.cat_listeners = []
 
 
 if __name__ == "__main__":
@@ -158,6 +172,40 @@ if __name__ == "__main__":
         assert (False, False) in changes, f"initial line state never reported: {changes}"
         assert (True, False) in changes, f"CTS change never reported: {changes}"
 
+    async def _demo_multiple_cat_listeners():
+        # RC-28 and the built-in radio panel both watch CAT replies on
+        # the same relay at once — both must see every frame, and
+        # clear_cat_listeners() must drop both (a stale one from the
+        # previously-selected radio must never fire after a switch).
+        seen_a, seen_b = [], []
+        relay = ComRelay("COM_FAKE", 19200, "127.0.0.1", 0)
+        relay.add_cat_listener(seen_a.append)
+        relay.add_cat_listener(seen_b.append)
+
+        class _FakeReader:
+            def __init__(self, chunks):
+                self._chunks = list(chunks)
+
+            async def read(self, n):
+                return self._chunks.pop(0) if self._chunks else b""
+
+        relay.serial = mock.Mock()
+        task = asyncio.create_task(relay._pump_tcp_to_serial(_FakeReader([b"\xfe\xfe\xe0\x94\x03\xfd"])))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert seen_a == [b"\xfe\xfe\xe0\x94\x03\xfd"] == seen_b
+
+        # Turning RC-28 off must drop only its own listener — the radio
+        # panel's must keep receiving replies undisturbed.
+        relay.remove_cat_listener(seen_a.append)
+        assert relay.cat_listeners == [seen_b.append]
+
+        relay.clear_cat_listeners()
+        assert relay.cat_listeners == []
+
     asyncio.run(_demo_idle_timeout())
     asyncio.run(_demo_line_state_change())
+    asyncio.run(_demo_multiple_cat_listeners())
     print("com_relay.py: ok")

@@ -34,6 +34,7 @@ from client.cw.iambic import IambicKeyer
 from client.cw.serial_paddle import SerialPaddle
 from client.cw.text_source import TextCwSource
 from client.cw.winkeyer import WinkeyerSource
+from client.radio_panel_ctl import RadioPanelController
 from client.rc28 import Rc28Driver
 from common.audio_io import AudioLink
 from common.cw_link import CwLink
@@ -125,7 +126,10 @@ class RadioSession:
         self.iambic_keyer = None
         self.paddle = None
         self.winkeyer = None
+        self.radio_cfg = None  # the currently-selected radio's full config, e.g. for a live RC-28 toggle
         self.rc28 = None
+        self.rc28_error = None  # set if the RC-28 driver failed to start/stay up; radio_panel.py shows it
+        self.radio_ctl = None  # RadioPanelController for the built-in radio panel — see client/radio_panel.py
         self._tasks = []
 
     def _api_base(self) -> str:
@@ -299,9 +303,63 @@ class RadioSession:
         client = self.status_clients.get(name)
         return client.busy_by if client else None
 
+    async def _run_rc28(self, driver: Rc28Driver, relay: ComRelay):
+        """Runs the RC-28 driver task and cleans up after itself when it
+        ends — whether that's stop() finishing the poll loop
+        cooperatively, task cancellation (radio switch/shutdown), or the
+        device raising (not plugged in, or unplugged mid-session). Being
+        self-cleaning means the on/off toggle doesn't need to know which
+        of those happened."""
+        try:
+            await driver.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("RC-28 driver спря с грешка", exc_info=True)
+            self.rc28_error = f"RC-28: {e}"
+        finally:
+            relay.remove_cat_listener(driver.on_cat_reply)
+            if self.rc28 is driver:
+                self.rc28 = None
+
+    def _start_rc28(self):
+        """(Re)starts the RC-28 driver on the currently active radio's
+        relay if the config says it should be running. No-op if it's
+        already running, disabled, or this radio has no CI-V address.
+        Called both from switch_to() and from the runtime on/off toggle
+        (set_rc28_enabled) — by the time either calls this, any previous
+        driver has already cleaned itself up (see _run_rc28's finally),
+        so `self.rc28` truthy here really does mean "already running"."""
+        if self.rc28 or not self.app_cfg.get("rc28", {}).get("enabled"):
+            return
+        relay = self.cat_relays.get(self.radio_name)
+        if not self.radio_cfg or not self.radio_cfg.get("civ_address") or not relay:
+            if self.radio_cfg:
+                self.rc28_error = "RC-28 изисква CI-V адрес за това радио (виж admin панела)"
+            return
+        driver = Rc28Driver(relay.send_cat, self.radio_cfg["civ_address"], self.app_cfg["rc28"].get("step_hz", 10))
+        relay.add_cat_listener(driver.on_cat_reply)
+        self.rc28 = driver
+        self.rc28_error = None
+        self._tasks.append(asyncio.create_task(self._run_rc28(driver, relay)))
+
+    async def set_rc28_enabled(self, enabled: bool):
+        """Runtime on/off toggle for RC-28 (the radio panel's checkbox)
+        — independent of switching radios, persists like every other
+        Settings-dialog field."""
+        self.app_cfg.setdefault("rc28", {})["enabled"] = enabled
+        self._save_config()
+        if not enabled:
+            if self.rc28:
+                self.rc28.stop()
+            self.rc28_error = None
+            return
+        self._start_rc28()
+
     async def switch_to(self, radio_cfg: dict):
         await self._teardown()
         self.radio_name = radio_cfg["name"]
+        self.radio_cfg = radio_cfg
 
         self.control = ControlClient(self.username, self.password, self.server_host, radio_cfg["control_port"])
         self.control.on_reconfigured = lambda name=radio_cfg["name"]: asyncio.create_task(self._handle_reconfigured(name))
@@ -357,14 +415,18 @@ class RadioSession:
             self.winkeyer = WinkeyerSource(cw_cfg["winkeyer_port"], cw_cfg.get("winkeyer_baud", 1200), self.cw_link.send_key)
             self._tasks.append(asyncio.create_task(self.winkeyer.run()))
 
-        rc28_cfg = self.app_cfg.get("rc28", {})
         relay = self.cat_relays.get(self.radio_name)
-        if rc28_cfg.get("enabled") and radio_cfg.get("civ_address") and relay:
-            self.rc28 = Rc28Driver(relay.send_cat, radio_cfg["civ_address"], rc28_cfg.get("step_hz", 10))
-            relay.on_cat_data = self.rc28.on_cat_reply
-            self._tasks.append(asyncio.create_task(self.rc28.run()))
+        self._start_rc28()  # self.rc28 is already None here — _teardown()'s task cleanup guarantees it
+
+        # Built-in radio panel (client/radio_panel.py) — independent of
+        # RC-28's enabled flag, both can watch the same relay's CAT
+        # replies at once (see ComRelay.cat_listeners).
+        if radio_cfg.get("civ_address") and relay:
+            self.radio_ctl = RadioPanelController(relay.send_cat, radio_cfg["civ_address"])
+            relay.add_cat_listener(self.radio_ctl.on_cat_reply)
+            self._tasks.append(asyncio.create_task(self.radio_ctl.run()))
         else:
-            self.rc28 = None
+            self.radio_ctl = None
 
         log.info("switched to radio %s", self.radio_name)
 
@@ -386,7 +448,7 @@ class RadioSession:
 
     async def _teardown(self):
         for relay in self.cat_relays.values():
-            relay.on_cat_data = None  # clear any stale RC-28 hookup from the previously-selected radio
+            relay.clear_cat_listeners()  # drop any stale RC-28/radio-panel hookup from the previously-selected radio
         for t in self._tasks:
             t.cancel()
         for t in self._tasks:
@@ -540,8 +602,70 @@ if __name__ == "__main__":
         await session._handle_external_line_state("CIV-RADIO", "civ", True, True)
         assert civ_client.calls == [], "civ radios key PTT via CAT bytes, not line state"
 
+    async def _demo_rc28_start_stop():
+        # RC-28 lifecycle: no CI-V address on this radio -> refuses with
+        # a clear reason, never touches hardware. Has one, but no real
+        # RC-28 plugged in -> hid.device().open() raises, and that must
+        # fail gracefully (self.rc28 cleared, self.rc28_error set, its
+        # listener removed) instead of crashing the client. Disabling
+        # calls stop() on whatever's currently running.
+        class _FakeRelay:
+            def __init__(self):
+                self.listeners = []
+
+            async def send_cat(self, data):
+                pass
+
+            def add_cat_listener(self, cb):
+                self.listeners.append(cb)
+
+            def remove_cat_listener(self, cb):
+                if cb in self.listeners:
+                    self.listeners.remove(cb)
+
+        session = RadioSession({
+            "username": "t", "server_host": "127.0.0.1", "com": {"baud": 19200},
+            "rc28": {"enabled": True, "step_hz": 10},
+        })
+        session.radio_name = "R"
+        session.cat_relays = {"R": _FakeRelay()}
+
+        session.radio_cfg = {"name": "R"}  # no civ_address
+        session._start_rc28()
+        assert session.rc28 is None
+        assert session.rc28_error and "CI-V" in session.rc28_error
+
+        session.radio_cfg = {"name": "R", "civ_address": 0x94}
+        session.rc28_error = None
+        session._start_rc28()
+        assert session.rc28 is not None, "driver object should exist while its task starts up"
+        assert len(session.cat_relays["R"].listeners) == 1
+        await asyncio.sleep(0.2)  # let the task reach hid.device().open() and fail (no real RC-28 here)
+        assert session.rc28 is None, "a driver that failed to start must self-clean"
+        assert session.rc28_error and "RC-28" in session.rc28_error
+        assert session.cat_relays["R"].listeners == [], "the failed driver's listener must be removed too"
+
+        class _FakeDriver:
+            def __init__(self):
+                self.stopped = False
+
+            def stop(self):
+                self.stopped = True
+
+            def on_cat_reply(self, data):
+                pass
+
+        fake_driver = _FakeDriver()
+        session.rc28 = fake_driver
+        session.rc28_error = "stale"
+        await session.set_rc28_enabled(False)
+        assert fake_driver.stopped, "disabling must call stop() on the running driver"
+        assert session.rc28_error is None, "disabling must clear any stale error message"
+        assert session.app_cfg["rc28"]["enabled"] is False
+
     asyncio.run(_demo())
     asyncio.run(_demo_reconnect())
     asyncio.run(_demo_reconfigured_ignores_stale_radio())
     asyncio.run(_demo_external_line_state())
+    asyncio.run(_demo_rc28_start_stop())
     print("session.py: ok")
