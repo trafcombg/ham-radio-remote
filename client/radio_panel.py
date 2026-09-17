@@ -371,9 +371,16 @@ class RadioPanel(QWidget):
         self.rc28_status_label = QLabel("")
         self.rc28_status_label.setStyleSheet("color: gray; font-size: 11px;")
 
-        self.unavailable_label = QLabel(
-            "Няма CI-V адрес за това радио — радио панелът изисква настроен CI-V адрес в admin панела."
-        )
+        # Start/stop for the CAT polling itself (client/radio_panel_ctl.py)
+        # — independent of RC-28's own toggle above. Deliberately NOT in
+        # tick()'s "disable while unavailable" list: unavailable can BE
+        # "the operator turned this off", so the checkbox must stay
+        # clickable to turn it back on.
+        self.cat_enabled_checkbox = QCheckBox("CAT връзка с радиото")
+        self.cat_enabled_checkbox.setChecked(bool(session.app_cfg.get("radio_panel", {}).get("enabled", True)))
+        self.cat_enabled_checkbox.toggled.connect(self._on_cat_enabled_toggled)
+
+        self.unavailable_label = QLabel()
         self.unavailable_label.setStyleSheet("color: #f59e0b;")
         self.unavailable_label.setWordWrap(True)
         self.unavailable_label.hide()
@@ -409,6 +416,7 @@ class RadioPanel(QWidget):
             dial.valueChanged.connect(lambda value, n=name: self._on_level_changed(n, value))
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self.cat_enabled_checkbox)
         layout.addWidget(self.unavailable_label)
         layout.addLayout(content_row, 1)
         layout.addLayout(memory_row)
@@ -513,6 +521,9 @@ class RadioPanel(QWidget):
     def _on_rc28_toggled(self, checked: bool):
         asyncio.run_coroutine_threadsafe(self.session.set_rc28_enabled(checked), self.loop)
 
+    def _on_cat_enabled_toggled(self, checked: bool):
+        asyncio.run_coroutine_threadsafe(self.session.set_radio_panel_enabled(checked), self.loop)
+
     def _update_rc28_status(self):
         if self.session.rc28_error:
             self.rc28_status_label.setText(self.session.rc28_error)
@@ -529,6 +540,12 @@ class RadioPanel(QWidget):
     def tick(self):
         ctl = self.session.radio_ctl
         available = ctl is not None
+        if not available:
+            self.unavailable_label.setText(
+                "CAT връзката с радиото е спряна — включи отметката по-горе, за да я стартираш."
+                if not self.session.radio_panel_enabled else
+                "Няма CI-V адрес за това радио — радио панелът изисква настроен CI-V адрес в admin панела."
+            )
         self.unavailable_label.setVisible(not available)
         for w in (self.freq_edit, self.step_combo, self.up_button, self.down_button, self.tuning_dial,
                   self.rc28_checkbox, self.att_button, self.memory_buttons["SPLIT"], *self.band_buttons):
@@ -622,8 +639,9 @@ if __name__ == "__main__":
         pass
 
     class _FakeSession:
-        app_cfg = {"rc28": {"enabled": False}}
+        app_cfg = {"rc28": {"enabled": False}, "radio_panel": {"enabled": True}}
         radio_ctl = RadioPanelController(_noop_send, 0x94, "IC-7300")
+        radio_panel_enabled = True
         radio_name = "TEST"
         rc28 = None
         rc28_error = None
@@ -673,6 +691,19 @@ if __name__ == "__main__":
     panel_no_radio = RadioPanel(_FakeSessionNoRadio(), loop=None)
     panel_no_radio.tick()
     assert panel_no_radio.tx_rx_button.text() == "—"
+    assert "CI-V адрес" in panel_no_radio.unavailable_label.text()
+
+    # Operator turned the CAT checkbox off — must show a different reason
+    # than "no CI-V configured", and the checkbox itself must stay
+    # clickable (it's the only way to turn it back on).
+    class _FakeSessionCatDisabled(_FakeSession):
+        radio_ctl = None
+        radio_panel_enabled = False
+
+    panel_cat_disabled = RadioPanel(_FakeSessionCatDisabled(), loop=None)
+    panel_cat_disabled.tick()
+    assert "спряна" in panel_cat_disabled.unavailable_label.text()
+    assert panel_cat_disabled.cat_enabled_checkbox.isEnabled()
 
     # The tuning dial IS wired — spinning it must not crash even with no
     # event loop (loop=None here), since frequency_hz is None so

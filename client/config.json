@@ -22,7 +22,8 @@
     "output_device": null,
     "local_port": 5005,
     "mic_gain": 0.84,
-    "speaker_gain": 2.0
+    "speaker_gain": 0.53,
+    "latency": "high"
   },
   "cw": {
     "local_port": 5105,
@@ -35,19 +36,23 @@
     "winkeyer_baud": 1200
   },
   "rc28": {
-    "enabled": true,
+    "enabled": false,
     "step_hz": 10
   },
   "radios": [
     {
       "name": "IC-7300",
       "active": true,
+      "model": "IC-7300",
       "cat_port": 4532,
       "control_port": 4632,
       "audio_port": 5005,
       "cw_port": 5104,
-      "civ_address": 148
+      "codec": "opus",
+      "sample_rate": 48000,
+      "civ_address": 148,
+      "ptt_method": "civ"
     }
   ],
-  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAA1yx1JQ1GPfzzR7RdwFCverGgBmg3wSnUqIfJQnI1CFwAAAAAOgAAAAAIAACAAAAByHqj1DAXFM99FV4Nl9YA3wVBQ0P28nICmoLpefvDJHBAAAAD8/weETtozynjL6fell067QAAAAKY1eaBQh9CWtHAVf23n1c+jbyBSmcPawTfbzNXKDhDrBGgdJH1Epeze9Xr4Gfcvhm1v3J+XOW90k4hQPz/f6Pg="
+  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAA4KXS25BrZrEGNMeiDNMCdgKiysfcq92gyb3DeS2vocAAAAAAOgAAAAAIAACAAAADXZlgS9qBxVhoVKuVNWb7QruesOwjnsmplDJSpq4NH9xAAAADV6wKEOKmV6tyIwjs2JM4tQAAAAOQbV/p7vK8Cs/cLl0lZ4Aw0OGU64N+jUrH/DJnN0qO7rFkxpsb3b6tq0EVoQKN+ioNsbpYUOcG7yFWSFYIhb0M="
 }

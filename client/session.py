@@ -133,6 +133,8 @@ class RadioSession:
         self.rc28 = None
         self.rc28_error = None  # set if the RC-28 driver failed to start/stay up; radio_panel.py shows it
         self.radio_ctl = None  # RadioPanelController for the built-in radio panel — see client/radio_panel.py
+        self.radio_panel_enabled = app_cfg.get("radio_panel", {}).get("enabled", True)
+        self._radio_panel_task = None
         self._tasks = []
 
     def _api_base(self) -> str:
@@ -397,6 +399,63 @@ class RadioSession:
         log.info("RC-28 starting for %s (CI-V %02X) — opening USB device...", self.radio_name, self.radio_cfg["civ_address"])
         self._tasks.append(asyncio.create_task(self._run_rc28(driver, relay)))
 
+    async def _run_radio_panel(self, ctl: RadioPanelController, relay: ComRelay):
+        """Same self-cleaning shape as _run_rc28: whether the polling loop
+        is cancelled (radio switch/shutdown/user toggle) or dies on its
+        own, the listener gets removed and self.radio_ctl cleared so
+        radio_panel.py's tick() falls back to its "unavailable" state
+        instead of showing frozen, stale readings."""
+        try:
+            await ctl.run()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            relay.remove_cat_listener(ctl.on_cat_reply)
+            if self.radio_ctl is ctl:
+                self.radio_ctl = None
+
+    def _start_radio_panel(self):
+        """(Re)starts the built-in radio panel's CAT polling (client/
+        radio_panel.py) on the currently active radio's relay — unless the
+        operator turned it off with the panel's own toggle, or this radio
+        has no CI-V address configured. Mirrors _start_rc28(): no-op if
+        already running, and by the time switch_to() calls this,
+        _teardown()'s task cleanup already guarantees self.radio_ctl is
+        None."""
+        if self.radio_ctl:
+            return
+        if not self.radio_panel_enabled:
+            log.info("radio panel not started — disabled by user")
+            return
+        relay = self.cat_relays.get(self.radio_name)
+        if not self.radio_cfg or not self.radio_cfg.get("civ_address") or not relay:
+            log.info(
+                "radio panel not started for %s — civ_address=%s relay=%s",
+                self.radio_name, self.radio_cfg.get("civ_address") if self.radio_cfg else None, bool(relay),
+            )
+            return
+        ctl = RadioPanelController(relay.send_cat, self.radio_cfg["civ_address"], self.radio_cfg.get("model"))
+        relay.add_cat_listener(ctl.on_cat_reply)
+        self.radio_ctl = ctl
+        self._radio_panel_task = asyncio.create_task(self._run_radio_panel(ctl, relay))
+        self._tasks.append(self._radio_panel_task)
+
+    async def set_radio_panel_enabled(self, enabled: bool):
+        """Runtime on/off toggle for the built-in radio panel's CAT
+        polling (the panel's own checkbox) — independent of switching
+        radios, persists like RC-28's equivalent toggle."""
+        self.app_cfg.setdefault("radio_panel", {})["enabled"] = enabled
+        self._save_config()
+        self.radio_panel_enabled = enabled
+        if not enabled:
+            if self._radio_panel_task:
+                self._radio_panel_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._radio_panel_task
+                self._radio_panel_task = None
+            return
+        self._start_radio_panel()
+
     async def set_rc28_enabled(self, enabled: bool):
         """Runtime on/off toggle for RC-28 (the radio panel's checkbox)
         — independent of switching radios, persists like every other
@@ -469,22 +528,12 @@ class RadioSession:
             self.winkeyer = WinkeyerSource(cw_cfg["winkeyer_port"], cw_cfg.get("winkeyer_baud", 1200), self.cw_link.send_key)
             self._tasks.append(asyncio.create_task(self.winkeyer.run()))
 
-        relay = self.cat_relays.get(self.radio_name)
         self._start_rc28()  # self.rc28 is already None here — _teardown()'s task cleanup guarantees it
-
         # Built-in radio panel (client/radio_panel.py) — independent of
         # RC-28's enabled flag, both can watch the same relay's CAT
-        # replies at once (see ComRelay.cat_listeners).
-        if radio_cfg.get("civ_address") and relay:
-            self.radio_ctl = RadioPanelController(relay.send_cat, radio_cfg["civ_address"], radio_cfg.get("model"))
-            relay.add_cat_listener(self.radio_ctl.on_cat_reply)
-            self._tasks.append(asyncio.create_task(self.radio_ctl.run()))
-        else:
-            self.radio_ctl = None
-            log.info(
-                "radio panel not started for %s — civ_address=%s relay=%s",
-                self.radio_name, radio_cfg.get("civ_address"), bool(relay),
-            )
+        # replies at once (see ComRelay.cat_listeners). self.radio_ctl is
+        # already None here — _teardown()'s task cleanup guarantees it.
+        self._start_radio_panel()
 
         log.info("switched to radio %s", self.radio_name)
 
@@ -723,9 +772,51 @@ if __name__ == "__main__":
         assert session.rc28_error is None, "disabling must clear any stale error message"
         assert session.app_cfg["rc28"]["enabled"] is False
 
+    async def _demo_radio_panel_start_stop():
+        # Built-in radio panel (client/radio_panel.py) CAT polling: same
+        # lifecycle shape as RC-28 above, but gated by its own toggle
+        # (radio_panel_enabled) instead of RC-28's.
+        class _FakeRelay:
+            def __init__(self):
+                self.listeners = []
+
+            async def send_cat(self, data):
+                pass
+
+            def add_cat_listener(self, cb):
+                self.listeners.append(cb)
+
+            def remove_cat_listener(self, cb):
+                if cb in self.listeners:
+                    self.listeners.remove(cb)
+
+        session = RadioSession({"username": "t", "server_host": "127.0.0.1", "com": {"baud": 19200}})
+        session.radio_name = "R"
+        session.cat_relays = {"R": _FakeRelay()}
+        session.radio_cfg = {"name": "R", "civ_address": 0x94}
+
+        session.radio_panel_enabled = False
+        session._start_radio_panel()
+        assert session.radio_ctl is None, "must not start while disabled by the panel's own toggle"
+
+        await session.set_radio_panel_enabled(True)
+        assert session.radio_ctl is not None
+        assert len(session.cat_relays["R"].listeners) == 1
+        assert session.app_cfg["radio_panel"]["enabled"] is True
+        await asyncio.sleep(0.05)  # let the task actually start polling before cancelling it below —
+        # cancel()ing a task before its first run means the cancellation
+        # never enters the coroutine body at all, so its finally block
+        # (the cleanup we're testing) wouldn't run either.
+
+        await session.set_radio_panel_enabled(False)
+        assert session.radio_ctl is None, "disabling must stop polling and clear radio_ctl"
+        assert session.cat_relays["R"].listeners == [], "disabling must remove the CAT listener too"
+        assert session.app_cfg["radio_panel"]["enabled"] is False
+
     asyncio.run(_demo())
     asyncio.run(_demo_reconnect())
     asyncio.run(_demo_reconfigured_ignores_stale_radio())
     asyncio.run(_demo_external_line_state())
     asyncio.run(_demo_rc28_start_stop())
+    asyncio.run(_demo_radio_panel_start_stop())
     print("session.py: ok")

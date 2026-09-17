@@ -39,6 +39,13 @@ class AntennaSwitchBridge:
             elif reply["field"] == "D":
                 self.device_id = reply["value"]
 
+    def query_port(self):
+        """Manual re-query (admin panel's "Провери порт" button) — same
+        command start() already sends on connect, for when the switch's
+        port was changed from its own front panel/another controller and
+        the server's cached self.port has drifted out of sync."""
+        self.transport.write(CMD_QUERY_STATE)
+
     async def select_port(self, port: int, username: str | None = None):
         self.transport.write(select_port_command(port))
         # Optimistic — the switch's own R-shaped reply to Wn will confirm
@@ -89,6 +96,9 @@ if __name__ == "__main__":
         for port in range(1, 9):
             await bridge.select_port(port, "ivan")
             assert bridge.port == port
+
+        bridge.query_port()
+        assert bridge.transport.sent[-1] == CMD_QUERY_STATE
 
     asyncio.run(_demo())
     print("antenna_switch_bridge.py: ok")

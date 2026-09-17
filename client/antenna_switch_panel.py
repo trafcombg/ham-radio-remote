@@ -7,6 +7,7 @@ whichever radio happens to be selected.
 
 import asyncio
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 PORT_COUNT = 8
@@ -64,7 +65,13 @@ class AntennaSwitchPanel(QWidget):
 
     def tick(self):
         switches = self.session.antenna_switches
-        signature = tuple((s["name"], s.get("port"), s["can_control"]) for s in switches)
+        # port_labels is in the signature too — an admin edit to a port's
+        # name must trigger a rebuild the same way a port change does,
+        # now that the label is shown on the panel itself, not just in
+        # each button's tooltip.
+        signature = tuple(
+            (s["name"], s.get("port"), s["can_control"], tuple(s.get("port_labels") or [])) for s in switches
+        )
         if signature == self._signature:
             return
         self._signature = signature
@@ -94,7 +101,17 @@ class AntennaSwitchPanel(QWidget):
                 btn.setToolTip(f"Порт {port}: {label}" if label else f"Порт {port}")
                 btn.clicked.connect(lambda checked=False, n=name, p=port: self._on_port_clicked(n, p))
                 buttons.append(btn)
-                btn_row.addWidget(btn)
+
+                label_widget = QLabel(label)
+                label_widget.setAlignment(Qt.AlignCenter)
+                label_widget.setWordWrap(True)
+                label_widget.setStyleSheet("font-size: 10px; color: gray;")
+                label_widget.setFixedWidth(60)
+
+                port_col = QVBoxLayout()
+                port_col.addWidget(btn)
+                port_col.addWidget(label_widget)
+                btn_row.addLayout(port_col)
             box_layout.addLayout(btn_row)
             status_label = QLabel(status_text(switch))
             status_label.setStyleSheet("color: gray; font-size: 11px;")
@@ -109,4 +126,26 @@ if __name__ == "__main__":
     assert status_text({"port": 3, "port_labels": ["", "", "40m Dipole"], "can_control": True}) == "Порт 3 — 40m Dipole"
     assert status_text({"port": 1, "port_labels": ["Vertical"], "can_control": False}) == \
         "Порт 1 — Vertical — нямаш права"
-    print("antenna_switch_panel.py: ok (pure-logic checks only — Qt widget construction needs a QApplication)")
+
+    from PySide6.QtWidgets import QApplication
+
+    class _FakeSession:
+        antenna_switches = [
+            {"name": "SW1", "port": 3, "can_control": True, "port_labels": ["Vertical", "", "40m Dipole"]},
+        ]
+
+    app = QApplication.instance() or QApplication([])
+    panel = AntennaSwitchPanel(_FakeSession(), loop=None)
+    panel.tick()
+    row = panel._rows["SW1"]
+    assert row["buttons"][0].toolTip() == "Порт 1: Vertical"
+    assert row["buttons"][1].toolTip() == "Порт 2"  # no label configured for this port
+    assert row["buttons"][2].isChecked() is True  # port 3 is the switch's current port
+
+    # An admin edit to a port's label (port/can_control unchanged) must
+    # still trigger a rebuild now that the label is shown on the panel.
+    _FakeSession.antenna_switches[0]["port_labels"] = ["Vertical", "80m Dipole", "40m Dipole"]
+    panel.tick()
+    assert panel._rows["SW1"]["buttons"][1].toolTip() == "Порт 2: 80m Dipole"
+
+    print("antenna_switch_panel.py: ok")

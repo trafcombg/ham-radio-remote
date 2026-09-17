@@ -601,6 +601,16 @@ async def delete_antenna_switch(name: str, request: Request, admin=Depends(requi
     return {"ok": True}
 
 
+@app.post("/api/antenna-switches/{name}/query")
+async def query_antenna_switch_port(name: str, request: Request, admin=Depends(require_admin)):
+    switch_manager = get_switch_manager(request)
+    bridge = switch_manager.bridges.get(name)
+    if not bridge:
+        raise HTTPException(status_code=404, detail="суичът не е свързан")
+    bridge.query_port()
+    return {"ok": True}
+
+
 async def _select_antenna_switch_port(switch_manager: AntennaSwitchManager, name: str, port: int, username: str | None):
     bridge = switch_manager.bridges.get(name)
     if not bridge:

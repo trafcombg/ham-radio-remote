@@ -702,6 +702,10 @@ function renderSwitchTable() {
       <td>${portText}</td>
       <td></td>`;
     const actionsTd = tr.lastElementChild;
+    const queryBtn = document.createElement("button");
+    queryBtn.textContent = "Провери порт";
+    queryBtn.className = "secondary";
+    queryBtn.onclick = () => queryAntennaSwitchPort(s.name);
     const editBtn = document.createElement("button");
     editBtn.textContent = "Редактирай";
     editBtn.className = "secondary";
@@ -710,7 +714,7 @@ function renderSwitchTable() {
     delBtn.textContent = "Изтрий";
     delBtn.className = "danger";
     delBtn.onclick = () => deleteAntennaSwitch(s.name);
-    actionsTd.append(editBtn, delBtn);
+    actionsTd.append(queryBtn, editBtn, delBtn);
     tbody.appendChild(tr);
   }
 }
@@ -784,6 +788,13 @@ async function deleteAntennaSwitch(name) {
   if (!confirm(`Изтриване на ${name}?`)) return;
   await api(`/api/antenna-switches/${encodeURIComponent(name)}`, { method: "DELETE" });
   loadAntennaSwitches();
+}
+
+async function queryAntennaSwitchPort(name) {
+  await api(`/api/antenna-switches/${encodeURIComponent(name)}/query`, { method: "POST" });
+  // The switch answers over serial asynchronously — give it a moment to
+  // reply and update the bridge's cached port before we re-read it.
+  setTimeout(loadAntennaSwitches, 300);
 }
 
 let users = [];
