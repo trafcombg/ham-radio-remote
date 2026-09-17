@@ -52,7 +52,23 @@
       "sample_rate": 48000,
       "civ_address": 148,
       "ptt_method": "civ"
+    },
+    {
+      "name": "IC-746PRO",
+      "active": true,
+      "model": "IC-7400/746PRO",
+      "cat_port": 4533,
+      "control_port": 4633,
+      "audio_port": 5006,
+      "cw_port": 5106,
+      "codec": "opus",
+      "sample_rate": 48000,
+      "civ_address": 102,
+      "ptt_method": "rts"
     }
   ],
-  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAA4KXS25BrZrEGNMeiDNMCdgKiysfcq92gyb3DeS2vocAAAAAAOgAAAAAIAACAAAADXZlgS9qBxVhoVKuVNWb7QruesOwjnsmplDJSpq4NH9xAAAADV6wKEOKmV6tyIwjs2JM4tQAAAAOQbV/p7vK8Cs/cLl0lZ4Aw0OGU64N+jUrH/DJnN0qO7rFkxpsb3b6tq0EVoQKN+ioNsbpYUOcG7yFWSFYIhb0M="
+  "password_encrypted": "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAvyfOEKPfS0+nK73x8dzUCgAAAAACAAAAAAAQZgAAAAEAACAAAAA7lnFRsQeNVXNt0472sgSlliVI7rKGdvCGKVS3MNqsywAAAAAOgAAAAAIAACAAAAB76tugfaZOD2u4vAfwe+IeqiUnEvUWwuj6I/YY3KtH/xAAAABotPlkVyG6pqHfEXDDqJ0yQAAAAMpJv3UgMvbVuqzsBAYI4Xx31PugrbNwSeFP5+V8URg58vLrSV9FcVNmhmNvptd128neS3ygzZzyhNdvPgHcBKY=",
+  "radio_panel": {
+    "enabled": false
+  }
 }

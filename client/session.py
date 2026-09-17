@@ -493,7 +493,21 @@ class RadioSession:
             self.audio = AudioLink(
                 input_device=input_device,
                 output_device=output_device,
-                listen_port=audio_cfg["local_port"],
+                # Per-radio, not audio_cfg["local_port"]: that was a single
+                # port shared across every radio, so switching radios never
+                # actually changed which local port the client listened on.
+                # The OLD radio's server-side bridge learns the client's
+                # address from the first UDP packet it ever sees and NEVER
+                # forgets it (see AudioLink._on_speaker) — with one shared
+                # local port, the new radio's bridge learns that exact same
+                # address, so both bridges kept streaming to it forever,
+                # and the two decoded streams mixed into an audible beat.
+                # radio_cfg["audio_port"] is already unique per radio (the
+                # server needs a distinct UDP port per bridge anyway), so
+                # reusing it here for free gives every radio a distinct
+                # local port too — a stale bridge now sends to a port
+                # nobody's listening on instead of the live one.
+                listen_port=radio_cfg["audio_port"],
                 peer=(self.server_host, radio_cfg["audio_port"]),
                 mic_gain=audio_cfg.get("mic_gain", 1.0),
                 speaker_gain=audio_cfg.get("speaker_gain", 1.0),

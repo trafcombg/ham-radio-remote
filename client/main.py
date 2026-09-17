@@ -111,7 +111,10 @@ def main():
     asyncio.run_coroutine_threadsafe(session.start_cat_busy_poll(), loop)
     asyncio.run_coroutine_threadsafe(_update_check_loop(update_state), loop)
 
-    ports = [(cfg["audio"]["local_port"], "udp"), (cfg["cw"]["local_port"], "udp")]
+    # One firewall rule per radio's audio port, not the old single shared
+    # local_port — switch_to() now binds audio to radio_cfg["audio_port"]
+    # per radio (see session.py) so each one needs its own inbound rule.
+    ports = [(r["audio_port"], "udp") for r in cfg.get("radios", [])] + [(cfg["cw"]["local_port"], "udp")]
     asyncio.run_coroutine_threadsafe(asyncio.to_thread(ensure_ports_open, ports, "HAM Radio Remote Client"), loop)
 
     window = MainWindow(session, loop, cfg, path, update_state)
