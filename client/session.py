@@ -118,7 +118,7 @@ class RadioSession:
         self.server_version = None
         self.amplifiers: list = []  # polled periodically — see start_amplifier_poll(); ui.py just reads this
         self._amp_poll_task = None
-        self.antenna_switches: list = []  # polled periodically — see start_antenna_switch_poll(); radio_panel.py reads this
+        self.antenna_switches: list = []  # polled periodically — see start_antenna_switch_poll(); antenna_switch_panel.py reads this
         self._switch_poll_task = None
         self.radio_name = None
         self.control = None
@@ -201,8 +201,8 @@ class RadioSession:
 
     async def fetch_antenna_switches(self) -> list:
         """Every configured antenna switch, each flagged with can_control
-        and its linked_radio — radio_panel.py filters to the one (if any)
-        whose linked_radio matches the currently selected radio."""
+        for this user — standalone devices, not tied to any one radio,
+        shown in their own window (see client/antenna_switch_panel.py)."""
         try:
             return await asyncio.to_thread(self._fetch_antenna_switches_sync)
         except (urllib.error.URLError, OSError, ValueError) as e:

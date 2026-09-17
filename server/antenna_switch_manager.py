@@ -1,9 +1,6 @@
-"""Starts/stops/reloads antenna switch bridges. Each switch is always
-tied to exactly one radio (linked_radio is required, unlike the
-amplifier's optional one) — used both for CAT-less "is this radio
-currently transmitting" safety checks (see is_radio_transmitting) and
-for access control (see server/admin_api.py's reuse of
-user_can_access_radio)."""
+"""Starts/stops/reloads antenna switch bridges. Standalone devices, not
+tied to any specific radio — access control is its own per-user ACL
+(see server/admin_api.py, mirrors the amplifier's)."""
 
 import logging
 
@@ -19,17 +16,17 @@ class AntennaSwitchManager(BridgeManager):
     log_name = "switch"
     log = log
 
-    def __init__(self, db, radio_manager):
+    def __init__(self, db):
         super().__init__()
         self.db = db
-        self.radio_manager = radio_manager  # to check the linked radio's PTT arbiter before switching
 
     async def load_all(self):
         for cfg in await self.db.list_antenna_switch_configs():
             await self._start(cfg)
 
     async def _start(self, cfg: dict):
-        bridge = AntennaSwitchBridge(cfg, SerialAntennaSwitchTransport(cfg["serial_port"]), self.db)
+        transport = SerialAntennaSwitchTransport(cfg["serial_port"], cfg.get("baud", 9600))
+        bridge = AntennaSwitchBridge(cfg, transport, self.db)
         self._track(cfg["name"], bridge, bridge.start())
 
     async def reload(self, cfg: dict):
@@ -45,12 +42,3 @@ class AntennaSwitchManager(BridgeManager):
 
     def status(self):
         return {name: {"port": b.port, "device_id": b.device_id} for name, b in self.bridges.items()}
-
-    def is_radio_transmitting(self, radio_name: str) -> bool:
-        """Switching antenna port while the linked radio is keyed risks
-        arcing the switch's relay contacts (and possibly the
-        transmitter's output stage) — the same physical hazard PTT
-        arbitration already tracks, so this just reads that state
-        rather than adding a second lock."""
-        bridge = self.radio_manager.bridges.get(radio_name)
-        return bool(bridge and bridge.arbiter.holder is not None)

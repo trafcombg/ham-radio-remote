@@ -163,7 +163,7 @@ class AntennaSwitchConfigRequest(BaseModel):
     name: str
     model: str = "RSW8A1ER"
     serial_port: str
-    linked_radio: str  # required, unlike the amplifier's — a switch is wired inline with one radio's feedline
+    baud: int = 9600  # configurable — not every unit uses the captured session's 9600
     port_labels: list[str] = []  # what's plugged into each port, e.g. "20m Dipole" — padded/truncated to 8 on save
 
 
@@ -177,6 +177,7 @@ class UserRequest(BaseModel):
     is_admin: bool = False
     radios: list[str] = []
     amplifiers: list[str] = []
+    antenna_switches: list[str] = []
 
 
 def _to_cfg_dict(body: RadioConfigRequest) -> dict:
@@ -605,8 +606,6 @@ async def _select_antenna_switch_port(switch_manager: AntennaSwitchManager, name
         raise HTTPException(status_code=404, detail="суичът не е свързан")
     if not 1 <= port <= 8:
         raise HTTPException(status_code=400, detail="port трябва да е 1-8")
-    if switch_manager.is_radio_transmitting(bridge.cfg["linked_radio"]):
-        raise HTTPException(status_code=409, detail="радиото предава — превключването на антена е блокирано")
     await bridge.select_port(port, username)
     return {"ok": True, "port": port}
 
@@ -626,11 +625,10 @@ async def list_client_antenna_switches(request: Request, user=Depends(client_use
     for cfg in configs:
         can_control = bool(user["is_admin"])
         if not can_control and isinstance(db, PostgresDb):
-            can_control = await db.user_can_access_radio(user["username"], cfg["linked_radio"])
+            can_control = await db.user_can_access_antenna_switch(user["username"], cfg["name"])
         result.append({
             "name": cfg["name"],
             "model": cfg.get("model"),
-            "linked_radio": cfg["linked_radio"],
             "port": status.get(cfg["name"], {}).get("port"),
             "port_labels": cfg.get("port_labels") or [],
             "can_control": can_control,
@@ -643,11 +641,9 @@ async def set_client_antenna_switch_port(name: str, body: AntennaSwitchPortReque
     db = get_db(request)
     switch_manager = get_switch_manager(request)
     if not user["is_admin"]:
-        bridge = switch_manager.bridges.get(name)
-        linked_radio = bridge.cfg["linked_radio"] if bridge else None
-        allowed = linked_radio and isinstance(db, PostgresDb) and await db.user_can_access_radio(user["username"], linked_radio)
+        allowed = isinstance(db, PostgresDb) and await db.user_can_access_antenna_switch(user["username"], name)
         if not allowed:
-            raise HTTPException(status_code=403, detail="нямаш права за радиото на този суич")
+            raise HTTPException(status_code=403, detail="нямаш права за този суич")
     return await _select_antenna_switch_port(switch_manager, name, body.port, user["username"])
 
 
@@ -662,7 +658,7 @@ async def create_user(body: UserRequest, request: Request, admin=Depends(require
     if not body.password or len(body.password) < 4:
         raise HTTPException(status_code=400, detail="паролата трябва да е поне 4 символа")
     db = get_db(request)
-    await db.upsert_user(body.username, body.password, body.is_admin, body.radios, body.amplifiers)
+    await db.upsert_user(body.username, body.password, body.is_admin, body.radios, body.amplifiers, body.antenna_switches)
     return {"ok": True}
 
 
@@ -673,7 +669,7 @@ async def update_user(username: str, body: UserRequest, request: Request, admin=
     if body.password and len(body.password) < 4:
         raise HTTPException(status_code=400, detail="паролата трябва да е поне 4 символа")
     db = get_db(request)
-    await db.upsert_user(username, body.password or None, body.is_admin, body.radios, body.amplifiers)
+    await db.upsert_user(username, body.password or None, body.is_admin, body.radios, body.amplifiers, body.antenna_switches)
     return {"ok": True}
 
 

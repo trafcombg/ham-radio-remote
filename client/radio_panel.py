@@ -158,31 +158,6 @@ class RadioPanel(QWidget):
             self.band_buttons.append(btn)
             band_row.addWidget(btn)
 
-        # Показва се само когато текущото радио има свързан антенен суич
-        # (server/antenna_switch_*.py) — за разлика от усилвателите, НЕ
-        # е глобален списък, защото един суич е окачен на точно едно
-        # радио (в линията му до антената), не споделен.
-        self.antenna_widget = QWidget()
-        antenna_layout = QVBoxLayout(self.antenna_widget)
-        antenna_layout.setContentsMargins(0, 0, 0, 0)
-        antenna_header_row = QHBoxLayout()
-        antenna_header_row.addWidget(QLabel("Антена"))
-        self.antenna_label = QLabel("")
-        self.antenna_label.setStyleSheet("color: gray; font-size: 11px;")
-        antenna_header_row.addWidget(self.antenna_label, 1)
-        antenna_layout.addLayout(antenna_header_row)
-        antenna_btn_row = QHBoxLayout()
-        self.antenna_buttons = []
-        for port in range(1, 9):
-            btn = QPushButton(str(port))
-            btn.setObjectName("bandBtn")
-            btn.setCheckable(True)
-            btn.clicked.connect(lambda checked=False, p=port: self._on_antenna_port_clicked(p))
-            self.antenna_buttons.append(btn)
-            antenna_btn_row.addWidget(btn)
-        antenna_layout.addLayout(antenna_btn_row)
-        self.antenna_widget.hide()  # tick() reveals it once a linked switch is known — nothing to show before that
-
         # Работи над RC-28 (client/rc28.py) наравно с този панел — и
         # двата слушат едни и същи CAT отговори през ComRelay.cat_listeners
         # (виж session.py's _start_rc28). Отделен toggle тук вместо само
@@ -217,7 +192,6 @@ class RadioPanel(QWidget):
         meter_row.addWidget(self.smeter_value_label)
         layout.addLayout(meter_row)
         layout.addLayout(band_row)
-        layout.addWidget(self.antenna_widget)
         rc28_row = QHBoxLayout()
         rc28_row.addWidget(self.rc28_checkbox)
         rc28_row.addWidget(self.rc28_status_label, 1)
@@ -273,42 +247,6 @@ class RadioPanel(QWidget):
             return
         asyncio.run_coroutine_threadsafe(ctl.set_mode(mode_byte, ctl.filter_num or 1), self.loop)
 
-    def _current_antenna_switch(self) -> dict | None:
-        return next(
-            (s for s in self.session.antenna_switches if s["linked_radio"] == self.session.radio_name), None
-        )
-
-    def _on_antenna_port_clicked(self, port: int):
-        switch = self._current_antenna_switch()
-        if switch:
-            asyncio.run_coroutine_threadsafe(self.session.set_antenna_switch_port(switch["name"], port), self.loop)
-
-    def _update_antenna_switch(self):
-        switch = self._current_antenna_switch()
-        self.antenna_widget.setVisible(switch is not None)
-        if not switch:
-            return
-        # Сървърът вече отказва превключване докато радиото предава (виж
-        # AntennaSwitchManager.is_radio_transmitting) — тук само пестим
-        # на оператора един безполезен клик, не е защитата.
-        transmitting = bool(self.session.control and self.session.control.busy_by)
-        enabled = switch["can_control"] and not transmitting
-        labels = switch.get("port_labels") or []
-        for port, btn in enumerate(self.antenna_buttons, start=1):
-            btn.setEnabled(enabled)
-            btn.setChecked(port == switch.get("port"))
-            label = labels[port - 1] if port - 1 < len(labels) else ""
-            btn.setToolTip(f"Порт {port}: {label}" if label else f"Порт {port}")
-        status = switch["name"]
-        current_label = labels[switch["port"] - 1] if switch.get("port") and switch["port"] - 1 < len(labels) else ""
-        if current_label:
-            status += f" — {current_label}"
-        if transmitting:
-            status += " — блокирано (предава)"
-        elif not switch["can_control"]:
-            status += " — нямаш права"
-        self.antenna_label.setText(status)
-
     def _on_rc28_toggled(self, checked: bool):
         asyncio.run_coroutine_threadsafe(self.session.set_rc28_enabled(checked), self.loop)
 
@@ -334,7 +272,6 @@ class RadioPanel(QWidget):
         for btn in self.mode_buttons.values():
             btn.setEnabled(available)
         self._update_rc28_status()
-        self._update_antenna_switch()
         if not available:
             self.smeter_bar.setValue(0)
             self.smeter_value_label.setText("—")
@@ -381,7 +318,6 @@ if __name__ == "__main__":
         radio_name = "TEST"
         rc28 = None
         rc28_error = None
-        antenna_switches = []
 
     app = QApplication.instance() or QApplication([])
     panel = RadioPanel(_FakeSession(), loop=None)

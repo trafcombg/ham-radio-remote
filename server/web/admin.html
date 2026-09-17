@@ -186,7 +186,7 @@
 <h1>Антенни суичове (RSW8A1ER)</h1>
 <button id="addSwitchBtn">+ Добави суич</button>
 <table id="switchTable">
-  <thead><tr><th>Име</th><th>Модел</th><th>Свързано радио</th><th>Текущ порт</th><th></th></tr></thead>
+  <thead><tr><th>Име</th><th>Модел</th><th>Сериен порт</th><th>Baud</th><th>Текущ порт</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -197,7 +197,7 @@
     <label>Модел<input name="model" value="RSW8A1ER" required></label>
     <label>Сериен порт<select name="serial_port_select"></select></label>
     <label>Сериен порт (ръчно, ако не е в списъка)<input name="serial_port" placeholder="COM7" required></label>
-    <label>Свързано радио<select name="linked_radio" required></select></label>
+    <label>Baud<input name="baud" type="number" value="9600" required></label>
     <label>Портове — какво е свързано на всеки</label>
     <div id="switchPortLabels" style="display:grid; grid-template-columns: 1fr 1fr; gap:.4rem .6rem;"></div>
     <div style="margin-top:1rem; display:flex; gap:.5rem;">
@@ -210,7 +210,7 @@
 <h1>Потребители</h1>
 <button id="addUserBtn">+ Добави потребител</button>
 <table id="userTable">
-  <thead><tr><th>Потребител</th><th>Admin</th><th>Радиа</th><th>Усилватели</th><th></th></tr></thead>
+  <thead><tr><th>Потребител</th><th>Admin</th><th>Радиа</th><th>Усилватели</th><th>Антенни суичове</th><th></th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -224,6 +224,8 @@
     <div id="userRadioChecks"></div>
     <label>Усилватели с достъп</label>
     <div id="userAmpChecks"></div>
+    <label>Антенни суичове с достъп</label>
+    <div id="userSwitchChecks"></div>
     <div style="margin-top:1rem; display:flex; gap:.5rem;">
       <button type="submit">Запази</button>
       <button type="button" id="userCancelBtn" class="secondary">Отказ</button>
@@ -695,7 +697,8 @@ function renderSwitchTable() {
     tr.innerHTML = `
       <td>${s.name}</td>
       <td>${s.model}</td>
-      <td>${s.linked_radio}</td>
+      <td>${s.serial_port || ""}</td>
+      <td>${s.baud || ""}</td>
       <td>${portText}</td>
       <td></td>`;
     const actionsTd = tr.lastElementChild;
@@ -729,9 +732,6 @@ async function openSwitchEdit(s) {
   });
   portSelect.onchange = () => { if (portSelect.value) switchForm.serial_port.value = portSelect.value; };
 
-  const radioSelect = switchForm.linked_radio;
-  radioSelect.innerHTML = radios.map(r => `<option value="${r.name}">${r.name}</option>`).join("");
-
   const labels = (s && s.port_labels) || [];
   const portLabelsDiv = document.getElementById("switchPortLabels");
   portLabelsDiv.innerHTML = "";
@@ -750,7 +750,7 @@ async function openSwitchEdit(s) {
     switchForm.name.value = s.name;
     switchForm.model.value = s.model;
     switchForm.serial_port.value = s.serial_port || "";
-    switchForm.linked_radio.value = s.linked_radio;
+    switchForm.baud.value = s.baud || 9600;
   }
   switchDialog.showModal();
 }
@@ -765,7 +765,7 @@ switchForm.onsubmit = async (e) => {
     name: f.get("name"),
     model: f.get("model"),
     serial_port: f.get("serial_port"),
-    linked_radio: f.get("linked_radio"),
+    baud: parseInt(f.get("baud")) || 9600,
     port_labels: Array.from({ length: 8 }, (_, i) => f.get(`port_label_${i + 1}`) || ""),
   };
   const isNew = !editingSwitchName;
@@ -808,6 +808,7 @@ function renderUserTable() {
       <td>${u.is_admin ? "да" : "не"}</td>
       <td>${u.is_admin ? "всички" : (u.radios.join(", ") || "—")}</td>
       <td>${u.is_admin ? "всички" : (u.amplifiers.join(", ") || "—")}</td>
+      <td>${u.is_admin ? "всички" : (u.antenna_switches.join(", ") || "—")}</td>
       <td></td>`;
     const actionsTd = tr.lastElementChild;
     const editBtn = document.createElement("button");
@@ -845,6 +846,7 @@ function openUserEdit(u) {
   userForm.reset();
   _buildAccessChecks("userRadioChecks", radios.map(r => r.name), u ? u.radios : []);
   _buildAccessChecks("userAmpChecks", amplifiers.map(a => a.name), u ? u.amplifiers : []);
+  _buildAccessChecks("userSwitchChecks", antennaSwitches.map(s => s.name), u ? u.antenna_switches : []);
   if (u) {
     userForm.username.value = u.username;
     userForm.is_admin.checked = u.is_admin;
@@ -866,6 +868,7 @@ userForm.onsubmit = async (e) => {
     is_admin: f.get("is_admin") === "on",
     radios: checkedValues("userRadioChecks"),
     amplifiers: checkedValues("userAmpChecks"),
+    antenna_switches: checkedValues("userSwitchChecks"),
   };
   const isNew = !editingUsername;
   if (isNew && !cfg.password) {

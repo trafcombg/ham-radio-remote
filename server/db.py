@@ -115,7 +115,7 @@ class NullDb:
     async def list_users(self):
         return []
 
-    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names):
+    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names, antenna_switch_names=()):
         raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази потребители")
 
     async def delete_user(self, username):
@@ -125,6 +125,9 @@ class NullDb:
         return True  # no accounts to check without a db — same degraded-open behavior as require_admin's 503
 
     async def user_can_access_amplifier(self, username, amplifier_name) -> bool:
+        return True
+
+    async def user_can_access_antenna_switch(self, username, switch_name) -> bool:
         return True
 
     async def list_radio_configs(self):
@@ -268,23 +271,28 @@ class PostgresDb:
             )
             radio_rows = await c.fetch("SELECT user_id, radio_name FROM user_radio_access")
             amp_rows = await c.fetch("SELECT user_id, amplifier_name FROM user_amplifier_access")
+            switch_rows = await c.fetch("SELECT user_id, switch_name FROM user_antenna_switch_access")
         radios_by_user: dict = {}
         for r in radio_rows:
             radios_by_user.setdefault(r["user_id"], []).append(r["radio_name"])
         amps_by_user: dict = {}
         for r in amp_rows:
             amps_by_user.setdefault(r["user_id"], []).append(r["amplifier_name"])
+        switches_by_user: dict = {}
+        for r in switch_rows:
+            switches_by_user.setdefault(r["user_id"], []).append(r["switch_name"])
         return [
             {
                 "username": u["username"],
                 "is_admin": u["is_admin"],
                 "radios": sorted(radios_by_user.get(u["id"], [])),
                 "amplifiers": sorted(amps_by_user.get(u["id"], [])),
+                "antenna_switches": sorted(switches_by_user.get(u["id"], [])),
             }
             for u in users
         ]
 
-    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names):
+    async def upsert_user(self, username, password, is_admin, radio_names, amplifier_names, antenna_switch_names=()):
         """password=None keeps the existing hash (editing a user without
         changing their password); a brand-new user needs a password —
         admin_api.py enforces that before calling this."""
@@ -311,6 +319,7 @@ class PostgresDb:
                 user_id = row["id"]
                 await c.execute("DELETE FROM user_radio_access WHERE user_id = $1", user_id)
                 await c.execute("DELETE FROM user_amplifier_access WHERE user_id = $1", user_id)
+                await c.execute("DELETE FROM user_antenna_switch_access WHERE user_id = $1", user_id)
                 for name in radio_names:
                     await c.execute(
                         "INSERT INTO user_radio_access (user_id, radio_name) VALUES ($1,$2)", user_id, name,
@@ -318,6 +327,10 @@ class PostgresDb:
                 for name in amplifier_names:
                     await c.execute(
                         "INSERT INTO user_amplifier_access (user_id, amplifier_name) VALUES ($1,$2)", user_id, name,
+                    )
+                for name in antenna_switch_names:
+                    await c.execute(
+                        "INSERT INTO user_antenna_switch_access (user_id, switch_name) VALUES ($1,$2)", user_id, name,
                     )
 
     async def delete_user(self, username):
@@ -336,6 +349,7 @@ class PostgresDb:
             )
             await c.execute("DELETE FROM user_radio_access WHERE user_id = $1", user_id)
             await c.execute("DELETE FROM user_amplifier_access WHERE user_id = $1", user_id)
+            await c.execute("DELETE FROM user_antenna_switch_access WHERE user_id = $1", user_id)
 
     async def user_can_access_radio(self, username, radio_name) -> bool:
         async with self.pool.acquire() as c:
@@ -356,6 +370,17 @@ class PostgresDb:
                 ") AS has_access "
                 "FROM users u WHERE u.username = $1 AND u.password_hash IS NOT NULL",
                 username, amplifier_name,
+            )
+        return bool(row and (row["is_admin"] or row["has_access"]))
+
+    async def user_can_access_antenna_switch(self, username, switch_name) -> bool:
+        async with self.pool.acquire() as c:
+            row = await c.fetchrow(
+                "SELECT u.is_admin, EXISTS("
+                "  SELECT 1 FROM user_antenna_switch_access a WHERE a.user_id = u.id AND a.switch_name = $2"
+                ") AS has_access "
+                "FROM users u WHERE u.username = $1 AND u.password_hash IS NOT NULL",
+                username, switch_name,
             )
         return bool(row and (row["is_admin"] or row["has_access"]))
 
@@ -465,13 +490,13 @@ class PostgresDb:
         async with self.pool.acquire() as c:
             await c.execute(
                 """
-                INSERT INTO antenna_switch_configs (name, model, serial_port, linked_radio, port_labels, updated_at)
+                INSERT INTO antenna_switch_configs (name, model, serial_port, baud, port_labels, updated_at)
                 VALUES ($1,$2,$3,$4,$5, now())
                 ON CONFLICT (name) DO UPDATE SET
                     model = EXCLUDED.model, serial_port = EXCLUDED.serial_port,
-                    linked_radio = EXCLUDED.linked_radio, port_labels = EXCLUDED.port_labels, updated_at = now()
+                    baud = EXCLUDED.baud, port_labels = EXCLUDED.port_labels, updated_at = now()
                 """,
-                cfg["name"], cfg.get("model", "RSW8A1ER"), cfg.get("serial_port"), cfg["linked_radio"], port_labels,
+                cfg["name"], cfg.get("model", "RSW8A1ER"), cfg.get("serial_port"), cfg.get("baud", 9600), port_labels,
             )
 
     async def delete_antenna_switch_config(self, name):

@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS user_amplifier_access (
     PRIMARY KEY (user_id, amplifier_name)
 );
 
+CREATE TABLE IF NOT EXISTS user_antenna_switch_access (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    switch_name TEXT NOT NULL,
+    PRIMARY KEY (user_id, switch_name)
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id),
@@ -116,16 +122,17 @@ CREATE TABLE IF NOT EXISTS amplifier_telemetry (
 );
 
 -- RSW8A1ER antenna switch config + a log of who switched what port when.
--- Unlike amplifier_configs, no separate per-user ACL table: a switch is
--- always wired inline with one radio's feedline (not shared the way an
--- amplifier can be), so access reuses user_radio_access via linked_radio
--- (see db.py user_can_access_radio) instead of duplicating it.
+-- Standalone device, not tied to any one radio (an earlier revision
+-- linked each switch to exactly one radio for access control + a
+-- transmit-safety lockout; dropped per operator feedback — the pairing
+-- didn't match real usage) — access is its own per-user ACL table
+-- (user_antenna_switch_access above), same shape as amplifiers'.
 CREATE TABLE IF NOT EXISTS antenna_switch_configs (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     model TEXT NOT NULL DEFAULT 'RSW8A1ER',
     serial_port TEXT,
-    linked_radio TEXT NOT NULL,
+    baud INTEGER NOT NULL DEFAULT 9600,
     -- JSON array of exactly 8 strings, index 0 = port 1's label (e.g.
     -- "20m Dipole") — see common.rsw8a1er_protocol.normalize_port_labels,
     -- always applied before this is written. Plain TEXT, not JSONB: no
@@ -135,6 +142,12 @@ CREATE TABLE IF NOT EXISTS antenna_switch_configs (
     port_labels TEXT NOT NULL DEFAULT '[]',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration for antenna_switch_configs created before the radio link was
+-- dropped and baud became configurable — a no-op on a fresh database
+-- (the CREATE TABLE above already has the right shape).
+ALTER TABLE antenna_switch_configs ADD COLUMN IF NOT EXISTS baud INTEGER NOT NULL DEFAULT 9600;
+ALTER TABLE antenna_switch_configs DROP COLUMN IF EXISTS linked_radio;
 
 CREATE TABLE IF NOT EXISTS antenna_switch_events (
     id SERIAL PRIMARY KEY,

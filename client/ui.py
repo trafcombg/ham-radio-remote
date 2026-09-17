@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from client import credential_store
+from client.antenna_switch_panel import AntennaSwitchPanel
 from client.debug_dialog import DebugDialog
 from client.radio_panel import RadioPanel
 from client.settings_dialog import SettingsDialog
@@ -50,6 +51,10 @@ class MainWindow(QWidget):
         self.radio_panel = RadioPanel(session, loop)
         self.radio_panel_button = QPushButton("Радио панел")
         self.radio_panel_button.clicked.connect(self.radio_panel.open_or_raise)
+
+        self.antenna_switch_panel = AntennaSwitchPanel(session, loop)
+        self.antenna_switch_panel_button = QPushButton("Антенни суичове")
+        self.antenna_switch_panel_button.clicked.connect(self.antenna_switch_panel.open_or_raise)
 
         self.ptt_button = QPushButton("PTT (задръж)")
         self.ptt_button.setStyleSheet("font-size: 20px; font-weight: bold; padding: 18px;")
@@ -111,6 +116,7 @@ class MainWindow(QWidget):
         layout.addWidget(self.radio_list)
         layout.addWidget(self.status_label)
         layout.addWidget(self.radio_panel_button)
+        layout.addWidget(self.antenna_switch_panel_button)
         layout.addWidget(self.ptt_button)
         layout.addWidget(QLabel("Микрофон (вход)"))
         layout.addWidget(self.level_bar)
@@ -292,14 +298,15 @@ class MainWindow(QWidget):
             self.update_button.setText("Обнови (грешка, опитай пак)")
 
     def closeEvent(self, event):
-        # radio_panel is its own top-level window (no parent) — closing
-        # just this one hides it (see RadioPanel.closeEvent), so it never
-        # counts as "closed" on its own. Without this, closing THIS
-        # window while the radio panel happens to be open would leave it
-        # as the last visible top-level widget and Qt would never quit
-        # the app — app.exec() in main.py would just hang forever instead
-        # of reaching session.shutdown().
+        # radio_panel/antenna_switch_panel are their own top-level windows
+        # (no parent) — closing just this one hides them (see their own
+        # closeEvent overrides), so neither counts as "closed" on its
+        # own. Without this, closing THIS window while either happens to
+        # be open would leave it as the last visible top-level widget and
+        # Qt would never quit the app — app.exec() in main.py would just
+        # hang forever instead of reaching session.shutdown().
         self.radio_panel.hide()
+        self.antenna_switch_panel.hide()
         super().closeEvent(event)
 
     def _tick(self):
@@ -313,6 +320,7 @@ class MainWindow(QWidget):
 
         self._refresh_amplifier_panel()
         self.radio_panel.tick()
+        self.antenna_switch_panel.tick()
 
         if self.update_state and self.update_state.available and not self.update_button.isVisible():
             self.update_button.setText(f"Налична версия {self.update_state.available['version']} — Обнови")

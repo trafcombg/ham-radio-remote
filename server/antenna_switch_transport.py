@@ -18,7 +18,7 @@ import serial_asyncio
 
 log = logging.getLogger("antenna_switch_transport")
 
-BAUD = 9600  # matches the captured session; the device doesn't report its own baud
+DEFAULT_BAUD = 9600  # matches the captured session, but not every unit uses this — configurable per switch
 
 
 class _RelayProtocol(asyncio.Protocol):
@@ -37,14 +37,15 @@ class _RelayProtocol(asyncio.Protocol):
 
 
 class SerialAntennaSwitchTransport:
-    def __init__(self, port: str):
+    def __init__(self, port: str, baud: int = DEFAULT_BAUD):
         self.port = port
+        self.baud = baud
         self._proto = None
 
     async def connect(self, on_data):
         loop = asyncio.get_running_loop()
         _, self._proto = await serial_asyncio.create_serial_connection(
-            loop, lambda: _RelayProtocol(on_data), self.port, baudrate=BAUD,
+            loop, lambda: _RelayProtocol(on_data), self.port, baudrate=self.baud,
         )
 
     def write(self, data: bytes):

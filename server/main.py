@@ -103,7 +103,7 @@ async def main():
     amp_manager = AmplifierManager(db, manager)
     await amp_manager.load_all()
 
-    switch_manager = AntennaSwitchManager(db, manager)
+    switch_manager = AntennaSwitchManager(db)
     await switch_manager.load_all()
 
     admin_app.state.pending_update = None
