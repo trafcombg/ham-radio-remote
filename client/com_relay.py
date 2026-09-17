@@ -103,9 +103,16 @@ class ComRelay:
                 listener(data)
 
     async def send_cat(self, data: bytes):
+        # Unlike _pump_serial_to_tcp (com0com -> server, third-party CAT
+        # apps like RS-BA1), this is OUR OWN outgoing path (RadioPanelController,
+        # RC-28) and previously had no logging at all — "nothing in the
+        # debug log" was indistinguishable from "nothing being sent".
         if self.writer:
+            log.debug("send_cat -> server: %s", data.hex())
             self.writer.write(data)
             await self.writer.drain()
+        else:
+            log.debug("send_cat dropped (no server connection yet): %s", data.hex())
 
     def add_cat_listener(self, callback):
         self.cat_listeners.append(callback)
