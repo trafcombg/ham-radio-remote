@@ -88,6 +88,7 @@ class ComRelay:
                     self.on_line_state_change(*lines)
 
     async def _pump_tcp_to_serial(self, reader):
+        loop = asyncio.get_running_loop()
         while True:
             try:
                 data = await asyncio.wait_for(reader.read(256), timeout=IDLE_TIMEOUT_S)
@@ -98,9 +99,19 @@ class ComRelay:
                 log.warning("CAT bridge connection closed")
                 break
             log.debug("server -> %s: %s", self.com_port, data.hex())
-            self.serial.write(data)
+            # Our own listeners (built-in radio panel, RC-28) get the data
+            # right away — they must not wait on the com0com write below.
             for listener in self.cat_listeners:
                 listener(data)
+            # self.serial.write() is a blocking Win32 WriteFile() call —
+            # when nothing reads the OTHER end of the com0com pair (no
+            # third-party CAT app connected to the exposed port), the
+            # buffer fills and this never returns. Run synchronously on
+            # the loop thread (as it used to be), it freezes the WHOLE
+            # event loop forever, including every unrelated task on it —
+            # which is exactly why the built-in radio panel showed no
+            # reaction even though replies were arriving fine.
+            await loop.run_in_executor(None, self.serial.write, data)
 
     async def send_cat(self, data: bytes):
         # Unlike _pump_serial_to_tcp (com0com -> server, third-party CAT
