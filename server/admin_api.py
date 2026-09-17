@@ -394,6 +394,7 @@ async def list_client_radios(request: Request):
             {
                 "name": c["name"],
                 "active": c.get("active", True),
+                "model": c.get("model"),
                 "cat_port": c["cat"]["tcp_port"],
                 "control_port": c["control_port"],
                 "audio_port": c["audio"]["udp_port"],
