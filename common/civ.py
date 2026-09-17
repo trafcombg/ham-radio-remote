@@ -108,6 +108,89 @@ def parse_mode_reply(data: bytes) -> tuple[int, int | None] | None:
     return data[5], (data[6] if len(data) == 8 else None)
 
 
+def _bcd2(value: int) -> bytes:
+    """2-byte BCD encoding of a 0-255 value, e.g. 255 -> b'\\x02\\x55' —
+    the same format the radio uses for S-meter and the 'levels' below
+    (AF/RF/mic gain, CW pitch, PO/SWR/ALC meters...), per the IC-7300
+    Full Manual's CI-V command table (section 19)."""
+    s = f"{value:04d}"
+    return bytes([(int(s[0]) << 4) | int(s[1]), (int(s[2]) << 4) | int(s[3])])
+
+
+def _parse_bcd2(hi: int, lo: int) -> int:
+    return int(f"{hi:02x}{lo:02x}")
+
+
+def single_byte_command(civ_address: int, cmd: int, sub: int, value: int) -> bytes:
+    """Generic 'send a one-byte setting' CI-V frame — covers both plain
+    on/off toggles (value 0/1) and small enums like AGC's FAST/MID/SLOW
+    (value 1/2/3), which the radio encodes identically: cmd, sub-cmd,
+    one raw data byte. See common/civ_models.py for which (cmd, sub)
+    pairs a given radio model actually supports."""
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + bytes([cmd, sub, value]) + END
+
+
+def get_single_byte_command(civ_address: int, cmd: int, sub: int) -> bytes:
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + bytes([cmd, sub]) + END
+
+
+def parse_single_byte_reply(data: bytes, cmd: int, sub: int) -> int | None:
+    if len(data) != 8 or data[0:2] != PREAMBLE or data[4] != cmd or data[5] != sub or data[-1:] != END:
+        return None
+    return data[6]
+
+
+def level_command(civ_address: int, cmd: int, sub: int, value: int) -> bytes:
+    """Generic 'send a 0-255 level' CI-V frame (AF/RF/mic gain, CW pitch,
+    RF power...) — same cmd+sub addressing as single_byte_command, but a
+    2-byte BCD value instead of one raw byte (see _bcd2)."""
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + bytes([cmd, sub]) + _bcd2(value) + END
+
+
+def get_level_command(civ_address: int, cmd: int, sub: int) -> bytes:
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + bytes([cmd, sub]) + END
+
+
+def parse_level_reply(data: bytes, cmd: int, sub: int) -> int | None:
+    if len(data) != 9 or data[0:2] != PREAMBLE or data[4] != cmd or data[5] != sub or data[-1:] != END:
+        return None
+    return _parse_bcd2(data[6], data[7])
+
+
+def split_command(civ_address: int, on: bool) -> bytes:
+    """Split (cmd 0x0F) has no sub-command byte, unlike the 0x14/0x15/0x16
+    families above — same shape on every CI-V radio, not model-specific."""
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x0f" + bytes([1 if on else 0]) + END
+
+
+def get_split_command(civ_address: int) -> bytes:
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x0f" + END
+
+
+def parse_split_reply(data: bytes) -> bool | None:
+    if len(data) != 7 or data[0:2] != PREAMBLE or data[4] != 0x0f or data[-1:] != END:
+        return None
+    return data[5] == 0x01
+
+
+def attenuator_command(civ_address: int, raw_byte: int) -> bytes:
+    """Attenuator (cmd 0x11) also has no sub-command byte, and its data
+    byte is a raw hex value (0x00=OFF, 0x20=20dB ON on the IC-7300) —
+    not a 0/1 flag, and not decimal dB — universal across CI-V radios,
+    not model-specific."""
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x11" + bytes([raw_byte]) + END
+
+
+def get_attenuator_command(civ_address: int) -> bytes:
+    return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x11" + END
+
+
+def parse_attenuator_reply(data: bytes) -> int | None:
+    if len(data) != 7 or data[0:2] != PREAMBLE or data[4] != 0x11 or data[-1:] != END:
+        return None
+    return data[5]
+
+
 def get_smeter_command(civ_address: int) -> bytes:
     return PREAMBLE + bytes([civ_address]) + CONTROLLER_ADDR + b"\x15\x02" + END
 
@@ -155,6 +238,35 @@ if __name__ == "__main__":
     assert parse_smeter_reply(b"\xfe\xfe\xe0\x94\x15\x02\x01\x40\xfd") == 140
     assert parse_smeter_reply(b"\xfe\xfe\xe0\x94\x15\x02\x02\x41\xfd") == 241  # S9+60
     assert parse_smeter_reply(b"garbage") is None
+
+    # single_byte_command family — toggles (AGC 16 12, etc.), verified
+    # byte-for-byte against the IC-7300 Full Manual's CI-V command table.
+    assert single_byte_command(0x94, 0x16, 0x02, 1) == b"\xfe\xfe\x94\xe0\x16\x02\x01\xfd"
+    assert get_single_byte_command(0x94, 0x16, 0x02) == b"\xfe\xfe\x94\xe0\x16\x02\xfd"
+    assert parse_single_byte_reply(b"\xfe\xfe\xe0\x94\x16\x02\x01\xfd", 0x16, 0x02) == 1
+    assert parse_single_byte_reply(b"\xfe\xfe\xe0\x94\x16\x03\x01\xfd", 0x16, 0x02) is None  # wrong sub-cmd
+    assert parse_single_byte_reply(b"garbage", 0x16, 0x02) is None
+
+    # level_command family (0-255, 2-byte BCD) — e.g. RF power 14 0A.
+    assert level_command(0x94, 0x14, 0x0A, 255) == b"\xfe\xfe\x94\xe0\x14\x0a\x02\x55\xfd"
+    assert get_level_command(0x94, 0x14, 0x0A) == b"\xfe\xfe\x94\xe0\x14\x0a\xfd"
+    assert parse_level_reply(b"\xfe\xfe\xe0\x94\x14\x0a\x02\x55\xfd", 0x14, 0x0A) == 255
+    assert parse_level_reply(b"\xfe\xfe\xe0\x94\x14\x0b\x02\x55\xfd", 0x14, 0x0A) is None  # wrong sub-cmd
+
+    assert split_command(0x94, True) == b"\xfe\xfe\x94\xe0\x0f\x01\xfd"
+    assert get_split_command(0x94) == b"\xfe\xfe\x94\xe0\x0f\xfd"
+    assert parse_split_reply(b"\xfe\xfe\xe0\x94\x0f\x01\xfd") is True
+    assert parse_split_reply(b"\xfe\xfe\xe0\x94\x0f\x00\xfd") is False
+    assert parse_split_reply(b"garbage") is None
+
+    # Attenuator's data byte is a raw hex value (0x20), not decimal 20 —
+    # same hex-literal convention as every cmd/sub-cmd byte in the manual
+    # (it just happens to read as "20" either way).
+    assert attenuator_command(0x94, 0x20) == b"\xfe\xfe\x94\xe0\x11\x20\xfd"
+    assert get_attenuator_command(0x94) == b"\xfe\xfe\x94\xe0\x11\xfd"
+    assert parse_attenuator_reply(b"\xfe\xfe\xe0\x94\x11\x20\xfd") == 0x20
+    assert parse_attenuator_reply(b"\xfe\xfe\xe0\x94\x11\x00\xfd") == 0
+    assert parse_attenuator_reply(b"garbage") is None
 
     freq_frame = b"\xfe\xfe\xe0\x94\x03\x00\x00\x25\x14\x00\xfd"
     buf = bytearray()

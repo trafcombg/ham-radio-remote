@@ -476,7 +476,7 @@ class RadioSession:
         # RC-28's enabled flag, both can watch the same relay's CAT
         # replies at once (see ComRelay.cat_listeners).
         if radio_cfg.get("civ_address") and relay:
-            self.radio_ctl = RadioPanelController(relay.send_cat, radio_cfg["civ_address"])
+            self.radio_ctl = RadioPanelController(relay.send_cat, radio_cfg["civ_address"], radio_cfg.get("model"))
             relay.add_cat_listener(self.radio_ctl.on_cat_reply)
             self._tasks.append(asyncio.create_task(self.radio_ctl.run()))
         else:
