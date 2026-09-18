@@ -32,6 +32,8 @@ class ComRelay:
         self.server_port = server_port
         self.writer = None
         self.serial = None
+        self.bytes_sent = 0     # cumulative — status_panel.py derives a speed from the deltas
+        self.bytes_recv = 0
         # Multiple independent consumers watch CAT replies at once now —
         # RC-28 (frequency deltas) and the built-in radio panel
         # (frequency/mode/S-meter) can both be active on the same radio.
@@ -78,6 +80,7 @@ class ComRelay:
             if data:
                 log.debug("%s -> server: %s", self.com_port, data.hex())
                 self.writer.write(data)
+                self.bytes_sent += len(data)
                 await self.writer.drain()
             else:
                 await asyncio.sleep(0.01)
@@ -98,6 +101,7 @@ class ComRelay:
             if not data:
                 log.warning("CAT bridge connection closed")
                 break
+            self.bytes_recv += len(data)
             log.debug("server -> %s: %s", self.com_port, data.hex())
             # Our own listeners (built-in radio panel, RC-28) get the data
             # right away — they must not wait on the com0com write below.
@@ -121,6 +125,7 @@ class ComRelay:
         if self.writer:
             log.debug("send_cat -> server: %s", data.hex())
             self.writer.write(data)
+            self.bytes_sent += len(data)
             await self.writer.drain()
         else:
             log.debug("send_cat dropped (no server connection yet): %s", data.hex())

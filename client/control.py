@@ -5,6 +5,7 @@ before it reaches the radio, regardless of PTT method (CI-V or RTS/DTR)."""
 import asyncio
 import json
 import logging
+import time
 
 from common.control_protocol import KEEPALIVE_INTERVAL_S, READ_TIMEOUT_S
 
@@ -22,6 +23,10 @@ class ControlClient:
         self.last_notice = None  # one-shot message for the UI, e.g. admin reconfigured the radio
         self.denied = False  # true once the server rejects hello (bad password / no permission)
         self.on_reconfigured = None  # optional callable() — e.g. session.py rebuilding AudioLink with new settings
+        self.bytes_sent = 0     # cumulative — status_panel.py derives a speed from the deltas
+        self.bytes_recv = 0
+        self.latency_ms = None  # last ping->pong round trip, None until the first one lands
+        self._ping_sent_at = None
 
     async def run(self):
         reader, writer = await asyncio.open_connection(self.server_host, self.server_port)
@@ -43,6 +48,7 @@ class ControlClient:
                     break
                 if not line:
                     break
+                self.bytes_recv += len(line)
                 msg = json.loads(line)
                 if msg["type"] == "status":
                     self.busy_by = msg["busy_by"]
@@ -61,6 +67,9 @@ class ControlClient:
                     break
                 elif msg["type"] == "ping":
                     pass  # server's keepalive — just proof of life
+                elif msg["type"] == "pong":
+                    if self._ping_sent_at is not None:
+                        self.latency_ms = (time.monotonic() - self._ping_sent_at) * 1000
         finally:
             ping_task.cancel()
             writer.close()
@@ -73,6 +82,7 @@ class ControlClient:
         dead one from the server's side."""
         while True:
             await asyncio.sleep(KEEPALIVE_INTERVAL_S)
+            self._ping_sent_at = time.monotonic()
             await self._send({"type": "ping"})
 
     async def request_ptt(self, on: bool):
@@ -87,7 +97,9 @@ class ControlClient:
 
     async def _send(self, obj):
         if self.writer:
-            self.writer.write((json.dumps(obj) + "\n").encode())
+            payload = (json.dumps(obj) + "\n").encode()
+            self.writer.write(payload)
+            self.bytes_sent += len(payload)
             await self.writer.drain()
 
 

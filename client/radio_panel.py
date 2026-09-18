@@ -146,6 +146,7 @@ class RadioPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("radioPanelRoot")
         self.setWindowTitle("Радио панел")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.setStyleSheet(RS_BA1_STYLE)
         self.session = session
         self.loop = loop

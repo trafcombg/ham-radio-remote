@@ -34,6 +34,7 @@ class AntennaSwitchPanel(QWidget):
     def __init__(self, session, loop, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Антенни суичове")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.session = session
         self.loop = loop
         self._signature = None

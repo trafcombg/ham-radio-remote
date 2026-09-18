@@ -2,6 +2,7 @@
 forced to DEBUG regardless of it — same idea and shared logic as the
 admin panel's Debug settings dialog (common/debug_logging.py)."""
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QScrollArea, QVBoxLayout, QWidget,
 )
@@ -13,6 +14,7 @@ class DebugDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Debug настройки")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
         self.resize(320, 420)
 
         state = debug_logging.current_state()

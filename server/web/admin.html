@@ -454,6 +454,17 @@ async function openEdit(r) {
     form.cw_udp_port.value = r.cw_udp_port;
     form.cw_method.value = r.cw ? r.cw.method : "";
     form.cw_serial_port.value = r.cw ? (r.cw.serial_port || "") : "";
+  } else {
+    // Ново радио — предложи следващите свободни портове от фиксираните
+    // диапазони (виж README "Портове и QoS"), вместо празни полета.
+    try {
+      const res = await fetch("/api/radios/suggest-ports");
+      const ports = await res.json();
+      if (ports.tcp_port != null) form.tcp_port.value = ports.tcp_port;
+      if (ports.control_port != null) form.control_port.value = ports.control_port;
+      if (ports.audio_udp_port != null) form.audio_udp_port.value = ports.audio_udp_port;
+      if (ports.cw_udp_port != null) form.cw_udp_port.value = ports.cw_udp_port;
+    } catch (e) { /* остави полетата празни — админът въвежда ръчно */ }
   }
   dialog.showModal();
 }

@@ -2,6 +2,7 @@
 separate, non-main screen (per the project plan): these are configured
 once per operator setup, not touched during a QSO."""
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QSpinBox,
 )
@@ -30,6 +31,7 @@ class SettingsDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("Настройки — сървър, CW и RC-28")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
 
         self.server_host = QLineEdit(server_host)
         self.server_host.setPlaceholderText("IP или име на сървъра, напр. 192.168.1.10")

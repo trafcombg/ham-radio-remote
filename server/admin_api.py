@@ -30,6 +30,17 @@ from server.device_registry import (
 )
 from server.amplifier_manager import AmplifierManager
 from server.antenna_switch_manager import AntennaSwitchManager
+from server.port_ranges import (
+    AUDIO_UDP_PORT_BASE,
+    AUDIO_UDP_PORT_STEP,
+    CAT_TCP_PORT_BASE,
+    CAT_TCP_PORT_STEP,
+    CONTROL_PORT_BASE,
+    CONTROL_PORT_STEP,
+    CW_UDP_PORT_BASE,
+    CW_UDP_PORT_STEP,
+    next_free_port,
+)
 from server.radio_manager import RadioBusyError, RadioManager
 from server.serial_sniffer import SnifferSession
 from server.web_auth import create_session_cookie, read_session_cookie
@@ -365,6 +376,43 @@ async def sniffer_stop(request: Request, admin=Depends(require_admin)):
     return {"ok": True}
 
 
+def _port_conflict(cfg: dict, others: list[dict]) -> str | None:
+    """First port this cfg shares with another radio's config, formatted
+    for the 422 detail — or None if no channel collides."""
+    channels = [
+        ("CAT TCP", cfg["cat"]["tcp_port"], lambda c: c["cat"]["tcp_port"]),
+        ("control", cfg["control_port"], lambda c: c["control_port"]),
+        ("audio UDP", cfg["audio"]["udp_port"], lambda c: c["audio"]["udp_port"]),
+        ("CW UDP", cfg["cw_udp_port"], lambda c: c["cw_udp_port"]),
+    ]
+    for other in others:
+        if other["name"] == cfg["name"]:
+            continue
+        for label, port, get in channels:
+            if get(other) == port:
+                return f"{label} порт {port} вече се ползва от радио \"{other['name']}\""
+    return None
+
+
+@app.get("/api/radios/suggest-ports")
+async def suggest_ports(request: Request, admin=Depends(require_admin)):
+    """Next free port per channel, for pre-filling the "Ново радио" form —
+    skips ports already assigned to any existing radio (see README.md
+    "Портове и QoS" for the ranges these are drawn from)."""
+    manager = get_manager(request)
+    configs = await manager.list_configs()
+    used_tcp = {c["cat"]["tcp_port"] for c in configs}
+    used_control = {c["control_port"] for c in configs}
+    used_audio = {c["audio"]["udp_port"] for c in configs}
+    used_cw = {c["cw_udp_port"] for c in configs}
+    return {
+        "tcp_port": next_free_port(CAT_TCP_PORT_BASE, CAT_TCP_PORT_STEP, used_tcp),
+        "control_port": next_free_port(CONTROL_PORT_BASE, CONTROL_PORT_STEP, used_control),
+        "audio_udp_port": next_free_port(AUDIO_UDP_PORT_BASE, AUDIO_UDP_PORT_STEP, used_audio),
+        "cw_udp_port": next_free_port(CW_UDP_PORT_BASE, CW_UDP_PORT_STEP, used_cw),
+    }
+
+
 @app.get("/api/radios/levels")
 async def radio_audio_levels(request: Request, admin=Depends(require_admin)):
     """Lightweight, polled frequently by the admin panel's level meters —
@@ -423,6 +471,9 @@ async def list_radios(request: Request, admin=Depends(require_admin)):
 async def create_radio(body: RadioConfigRequest, request: Request, admin=Depends(require_admin)):
     manager = get_manager(request)
     cfg = _to_cfg_dict(body)
+    conflict = _port_conflict(cfg, await manager.list_configs())
+    if conflict:
+        raise HTTPException(status_code=422, detail=conflict)
     try:
         await manager.reload_radio(cfg, force=True)  # a brand-new radio can't already be busy
     except (AmbiguousDeviceError, DeviceNotFoundError) as e:
@@ -436,6 +487,9 @@ async def update_radio(name: str, body: RadioConfigRequest, request: Request, ad
         raise HTTPException(status_code=400, detail="name mismatch")
     manager = get_manager(request)
     cfg = _to_cfg_dict(body)
+    conflict = _port_conflict(cfg, await manager.list_configs())
+    if conflict:
+        raise HTTPException(status_code=422, detail=conflict)
     try:
         await manager.reload_radio(cfg, force=body.force)
     except RadioBusyError as e:

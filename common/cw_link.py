@@ -14,6 +14,8 @@ class CwLink:
     def __init__(self, listen_port: int, peer=None, username: str | None = None):
         self.peer = peer
         self.username = username
+        self.bytes_sent = 0     # cumulative — status_panel.py derives a speed from the deltas
+        self.bytes_recv = 0
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
         self.sock.bind(("0.0.0.0", listen_port))
@@ -24,6 +26,7 @@ class CwLink:
         msg = json.dumps({"user": self.username, "on": on}).encode()
         try:
             self.sock.sendto(msg, self.peer)
+            self.bytes_sent += len(msg)
         except OSError:
             log.exception("CW key send failed")
 
@@ -36,6 +39,7 @@ class CwLink:
                 data, addr = self.sock.recvfrom(256)
             except BlockingIOError:
                 break
+            self.bytes_recv += len(data)
             if self.peer is None:
                 self.peer = addr
             try:

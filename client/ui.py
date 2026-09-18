@@ -35,6 +35,7 @@ class MainWindow(QWidget):
         self.update_state = update_state
 
         self.setWindowTitle(f"HAM Radio Remote — {app_cfg['username']}")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint)
 
         self.radio_list = QListWidget()
         for radio_cfg in app_cfg["radios"]:

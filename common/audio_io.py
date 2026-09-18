@@ -97,6 +97,12 @@ class AudioLink:
         self.latency_ms = 0.0  # PortAudio-reported device buffering latency, set in start()
         self.jitter_ms = 0.0   # smoothed deviation of received-packet spacing from FRAME_MS
         self._last_recv_time = None
+        # Cumulative — status_panel.py derives a speed from the deltas.
+        # Written from the PortAudio callback thread (see _on_mic/_on_speaker
+        # below); a plain int has no lock around it, so a display-only
+        # counter can in theory drop an update under a race, never corrupt.
+        self.bytes_sent = 0
+        self.bytes_recv = 0
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -185,6 +191,7 @@ class AudioLink:
             payload = self._encode_frame(out)
             if payload:
                 self.sock.sendto(payload, self.peer)
+                self.bytes_sent += len(payload)
         except Exception:
             # Broad on purpose: this runs inside the PortAudio C callback,
             # which can't propagate exceptions — an Opus encoder error
@@ -225,6 +232,7 @@ class AudioLink:
                 log.debug("recvfrom error on UDP :%s (peer restarting?) — playing silence", self._listen_port, exc_info=True)
                 self._last_recv_wait_log = now
             return
+        self.bytes_recv += len(data)
         if self.peer is None:
             self.peer = addr
             log.info("audio peer learned: %s", addr)

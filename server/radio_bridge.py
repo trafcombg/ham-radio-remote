@@ -285,7 +285,10 @@ class RadioBridge:
                 elif msg["type"] == "external_ptt" and username:
                     self._handle_external_ptt(msg["on"])
                 elif msg["type"] == "ping":
-                    pass  # just proof of life — see CONTROL_READ_TIMEOUT_S above
+                    # Proof of life (see CONTROL_READ_TIMEOUT_S above) AND a
+                    # round-trip the client times to show live latency —
+                    # see ControlClient._ping_loop.
+                    await self._send(writer, {"type": "pong"})
         except (ConnectionResetError, json.JSONDecodeError):
             pass
         finally:
