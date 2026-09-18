@@ -119,6 +119,12 @@ class RadioBridge:
         self.amp_fault_check = None      # optional callable() -> bool, set by AmplifierManager when linked
 
     async def start(self):
+        """Opens the serial port and binds every TCP/UDP port this radio
+        needs. Raises OSError synchronously (incl. serial.SerialException,
+        an OSError subclass) if a serial or network port is already taken
+        — RadioManager relies on that to know activation actually
+        succeeded before handing off to serve_forever(), not just that a
+        background task was spawned."""
         self.serial_proto = await open_serial(self.cfg["cat"]["serial_port"], self.cfg["cat"]["baud"])
         self.serial_proto.on_data = self._on_serial_data
         self.ptt_method = self._build_key_method(self.cfg["ptt"])
@@ -149,6 +155,11 @@ class RadioBridge:
             self.name, self.cfg["cat"]["tcp_port"], self.cfg["control_port"],
             audio_cfg["udp_port"], self.cfg["cw_udp_port"],
         )
+
+    async def serve_forever(self):
+        """The CAT/control TCP servers already bind and accept connections
+        as soon as start() creates them — this just keeps the task alive
+        so cancellation (radio removed/reloaded) has something to cancel."""
         try:
             await asyncio.gather(self._cat_server.serve_forever(), self._control_server.serve_forever())
         except asyncio.CancelledError:

@@ -69,27 +69,45 @@ class RadioManager(BridgeManager):
             configs = _load_json_radios()
 
         for cfg in configs:
-            await self._start_radio(cfg)
+            error = await self._start_radio(cfg)
+            if error:
+                cfg["active"] = False
+                if isinstance(self.db, PostgresDb):
+                    await self.db.upsert_radio_config(cfg)
+                log.warning("radio %s деактивирано автоматично при стартиране — %s", cfg["name"], error)
 
     async def list_configs(self):
         if isinstance(self.db, PostgresDb):
             return await self.db.list_radio_configs()
         return [b.cfg for b in self.bridges.values()]
 
-    async def _start_radio(self, cfg: dict) -> bool:
+    async def _start_radio(self, cfg: dict) -> str | None:
+        """Attempts to start cfg's bridge. Returns None on success, or a
+        Bulgarian error message on failure — either device resolution, or
+        one of its serial/TCP/UDP ports already being taken."""
         if not cfg.get("active", True):
             log.info("radio %s is inactive — skipped", cfg["name"])
-            return True
+            return None
         serial_devices = scan_serial_devices()
         audio_devices = scan_audio_devices()
         try:
             resolve_radio_devices(cfg, serial_devices, audio_devices)
         except (AmbiguousDeviceError, DeviceNotFoundError) as e:
             log.error("cannot start radio %s: %s", cfg["name"], e)
-            return False
+            return str(e)
         bridge = RadioBridge(cfg, self.db)
-        self._track(cfg["name"], bridge, bridge.start())
-        return True
+        try:
+            await bridge.start()
+        except OSError as e:
+            ports = (
+                f"CAT :{cfg['cat']['tcp_port']}, control :{cfg['control_port']}, "
+                f"audio :{cfg['audio']['udp_port']}, CW :{cfg['cw_udp_port']}"
+            )
+            log.error("cannot start radio %s: порт/сериен порт зает (%s): %s", cfg["name"], ports, e)
+            await bridge.shutdown()
+            return f"порт зает или недостъпен ({ports}): {e}"
+        self._track(cfg["name"], bridge, bridge.serve_forever())
+        return None
 
     async def reload_radio(self, cfg: dict, force: bool = False):
         name = cfg["name"]
@@ -99,8 +117,9 @@ class RadioManager(BridgeManager):
         await self.stop(name)
         if isinstance(self.db, PostgresDb):
             await self.db.upsert_radio_config(cfg)
-        if not await self._start_radio(cfg):
-            raise RuntimeError("device resolution failed — виж server логовете")
+        error = await self._start_radio(cfg)
+        if error:
+            raise RuntimeError(error)
 
     async def remove_radio(self, name: str, force: bool = False):
         existing = self.bridges.get(name)

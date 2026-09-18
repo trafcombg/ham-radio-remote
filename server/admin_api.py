@@ -476,7 +476,7 @@ async def create_radio(body: RadioConfigRequest, request: Request, admin=Depends
         raise HTTPException(status_code=422, detail=conflict)
     try:
         await manager.reload_radio(cfg, force=True)  # a brand-new radio can't already be busy
-    except (AmbiguousDeviceError, DeviceNotFoundError) as e:
+    except (AmbiguousDeviceError, DeviceNotFoundError, RuntimeError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"ok": True}
 
@@ -494,7 +494,7 @@ async def update_radio(name: str, body: RadioConfigRequest, request: Request, ad
         await manager.reload_radio(cfg, force=body.force)
     except RadioBusyError as e:
         raise HTTPException(status_code=409, detail={"busy_by": e.holder})
-    except (AmbiguousDeviceError, DeviceNotFoundError) as e:
+    except (AmbiguousDeviceError, DeviceNotFoundError, RuntimeError) as e:
         raise HTTPException(status_code=422, detail=str(e))
     return {"ok": True}
 

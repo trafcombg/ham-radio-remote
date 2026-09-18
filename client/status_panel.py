@@ -134,8 +134,9 @@ class StatusPanel(QWidget):
             if row:
                 self._update_radio_row(row, radio_cfg)
 
-        self._update_audio()
-        self._update_cw()
+        current_cfg = next((r for r in radios if r["name"] == self.session.radio_name), None)
+        self._update_audio(current_cfg)
+        self._update_cw(current_cfg)
 
     def _rebuild_radio_rows(self, radios: list):
         while self.radios_container.count():
@@ -148,13 +149,14 @@ class StatusPanel(QWidget):
             row_widget = QWidget()
             row = QHBoxLayout(row_widget)
             row.addWidget(QLabel(radio_cfg["name"]))
+            row.addWidget(QLabel(f"CAT TCP :{radio_cfg['cat_port']}"))
             cat_led = _led("gray")
             cat_label = QLabel("")
             row.addWidget(cat_led)
             row.addWidget(cat_label, 1)
+            row.addWidget(QLabel(f"Control TCP :{radio_cfg['control_port']}"))
             ctl_led = _led("gray")
             ctl_label = QLabel("")
-            row.addWidget(QLabel("Control:"))
             row.addWidget(ctl_led)
             row.addWidget(ctl_label)
             self.radios_container.addWidget(row_widget)
@@ -206,7 +208,7 @@ class StatusPanel(QWidget):
         _set_led(row["ctl_led"], ctl_color)
         row["ctl_label"].setText(ctl_text)
 
-    def _update_audio(self):
+    def _update_audio(self, radio_cfg: dict | None):
         if not self.session.radio_name or not self.session.audio:
             _set_led(self.audio_led, "gray")
             self.audio_label.setText("няма активна аудио връзка")
@@ -221,15 +223,18 @@ class StatusPanel(QWidget):
             output_device = audio_cfg.get("output_device")
         input_name = _device_name(input_device, audio_devices.list_input_devices())
         output_name = _device_name(output_device, audio_devices.list_output_devices())
-        sent = self._audio_sent_meter.update(self.session.audio.bytes_sent)
-        recv = self._audio_recv_meter.update(self.session.audio.bytes_recv)
+        audio = self.session.audio
+        sent = self._audio_sent_meter.update(audio.bytes_sent)
+        recv = self._audio_recv_meter.update(audio.bytes_recv)
+        port_text = f"UDP :{radio_cfg['audio_port']}" if radio_cfg else "UDP :?"
         _set_led(self.audio_led, "green")
         self.audio_label.setText(
-            f'{self.session.radio_name}: вход "{input_name}" · изход "{output_name}" '
+            f'{port_text} · {self.session.radio_name}: вход "{input_name}" · изход "{output_name}" '
+            f"· латентност {audio.latency_ms:.0f}ms · jitter {audio.jitter_ms:.1f}ms "
             f"· ↑{_fmt_rate(sent)} ↓{_fmt_rate(recv)}"
         )
 
-    def _update_cw(self):
+    def _update_cw(self, radio_cfg: dict | None):
         if not self.session.cw_link:
             _set_led(self.cw_led, "gray")
             self.cw_label.setText("няма активна CW връзка")
@@ -238,8 +243,11 @@ class StatusPanel(QWidget):
         peer_text = f"{peer[0]}:{peer[1]}" if peer else "?"
         sent = self._cw_sent_meter.update(self.session.cw_link.bytes_sent)
         recv = self._cw_recv_meter.update(self.session.cw_link.bytes_recv)
+        port_text = f"UDP :{radio_cfg['cw_port']}" if radio_cfg else "UDP :?"
         _set_led(self.cw_led, "green")
-        self.cw_label.setText(f"{self.session.radio_name} → {peer_text} · ↑{_fmt_rate(sent)} ↓{_fmt_rate(recv)}")
+        self.cw_label.setText(
+            f"{port_text} · {self.session.radio_name} → {peer_text} · ↑{_fmt_rate(sent)} ↓{_fmt_rate(recv)}"
+        )
 
 
 if __name__ == "__main__":
@@ -268,12 +276,14 @@ if __name__ == "__main__":
     class _FakeAudio:
         bytes_sent = 1000
         bytes_recv = 2000
+        latency_ms = 45.0
+        jitter_ms = 1.2
 
     class _FakeSession:
         app_cfg = {
             "radios": [
-                {"name": "IC-7300", "active": True},
-                {"name": "FT-991", "active": False},
+                {"name": "IC-7300", "active": True, "cat_port": 4532, "control_port": 4632, "audio_port": 5004, "cw_port": 5104},
+                {"name": "FT-991", "active": False, "cat_port": 4533, "control_port": 4633, "audio_port": 5006, "cw_port": 5106},
             ],
             "com_ports": {"IC-7300": {"local": "COM5"}},
             "radio_audio": {},
@@ -303,7 +313,10 @@ if __name__ == "__main__":
     assert inactive_row["ctl_label"].text() == "—"
 
     assert "IC-7300" in panel.audio_label.text() and "B/s" in panel.audio_label.text()
+    assert "UDP :5004" in panel.audio_label.text()
+    assert "латентност 45ms" in panel.audio_label.text() and "jitter 1.2ms" in panel.audio_label.text()
     assert "127.0.0.1:5104" in panel.cw_label.text() and "B/s" in panel.cw_label.text()
+    assert "UDP :5104" in panel.cw_label.text()
 
     # A second tick with more bytes must show a real >0 rate, not just the
     # "throughput text is present" check above.
