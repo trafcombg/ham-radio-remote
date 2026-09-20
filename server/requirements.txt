@@ -7,5 +7,12 @@ asyncpg
 pycaw
 fastapi
 uvicorn
+# ponytail: pinned to an unmerged fork/branch, not the PyPI release — our
+# Tapo P100 uses TP-Link's new TPAP encryption scheme, which upstream
+# python-kasa doesn't support yet (open since 2025-10, still open as of
+# 2026-09: https://github.com/python-kasa/python-kasa/issues/1590). This
+# fork (https://github.com/python-kasa/python-kasa/pull/1592) adds it but
+# isn't merged/released — switch back to plain `python-kasa` once that PR
+# lands in a PyPI release.
 itsdangerous
-python-kasa
+python-kasa @ git+https://github.com/ZeliardM/python-kasa.git@feature/tpap
