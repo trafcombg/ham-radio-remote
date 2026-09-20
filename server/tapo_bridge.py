@@ -15,7 +15,7 @@ reloaded/reactivated later.
 import asyncio
 import logging
 
-from kasa import Credentials, Device, DeviceConfig, KasaException
+from kasa import Credentials, Device, Discover, KasaException
 
 log = logging.getLogger("tapo_bridge")
 
@@ -35,11 +35,14 @@ class TapoBridge:
         self._poll_task = None
 
     async def start(self):
-        config = DeviceConfig(
-            host=self.cfg["host"],
-            credentials=Credentials(self.cfg.get("username") or "", self.cfg.get("password") or ""),
-        )
-        self.device = await Device.connect(config=config)
+        # Device.connect(config=...) needs the device's protocol/encryption
+        # family already known (KLAP vs. the legacy plain "IOT" protocol) —
+        # without it, it guessed wrong for this P100 (SMART.TAPOPLUG/KLAP)
+        # and tried the old XOR protocol on port 9999, which the device
+        # doesn't even listen on. discover_single() runs the same discovery
+        # probe the `kasa` CLI uses to detect this correctly, then connects.
+        credentials = Credentials(self.cfg.get("username") or "", self.cfg.get("password") or "")
+        self.device = await Discover.discover_single(self.cfg["host"], credentials=credentials)
         await self._refresh()
         self._poll_task = asyncio.create_task(self._poll_loop())
         log.info("Tapo plug %s up (%s)", self.name, self.cfg["host"])
