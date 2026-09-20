@@ -163,6 +163,15 @@ class NullDb:
     async def log_antenna_switch_event(self, name, port, username):
         pass
 
+    async def list_tapo_configs(self):
+        return []
+
+    async def upsert_tapo_config(self, cfg):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази Tapo контакти")
+
+    async def delete_tapo_config(self, name):
+        raise RuntimeError("PostgreSQL не е конфигуриран (db.dsn) — админ панелът не може да пази Tapo контакти")
+
 
 class PostgresDb:
     def __init__(self, dsn: str):
@@ -509,6 +518,34 @@ class PostgresDb:
                 "INSERT INTO antenna_switch_events (switch_name, port, changed_by) VALUES ($1,$2,$3)",
                 name, port, username,
             )
+
+    async def list_tapo_configs(self):
+        async with self.pool.acquire() as c:
+            rows = await c.fetch("SELECT * FROM tapo_configs ORDER BY name")
+        return [dict(r) for r in rows]
+
+    async def upsert_tapo_config(self, cfg: dict):
+        # password: COALESCE keeps the existing one when the admin edits a
+        # device without retyping it — a blank field must not wipe a
+        # working credential (see the admin panel's Tapo edit form).
+        async with self.pool.acquire() as c:
+            await c.execute(
+                """
+                INSERT INTO tapo_configs (name, host, username, password, linked_radio, linked_amplifier, updated_at)
+                VALUES ($1,$2,$3,$4,$5,$6, now())
+                ON CONFLICT (name) DO UPDATE SET
+                    host = EXCLUDED.host, username = EXCLUDED.username,
+                    password = COALESCE(EXCLUDED.password, tapo_configs.password),
+                    linked_radio = EXCLUDED.linked_radio, linked_amplifier = EXCLUDED.linked_amplifier,
+                    updated_at = now()
+                """,
+                cfg["name"], cfg["host"], cfg.get("username"), cfg.get("password"),
+                cfg.get("linked_radio"), cfg.get("linked_amplifier"),
+            )
+
+    async def delete_tapo_config(self, name):
+        async with self.pool.acquire() as c:
+            await c.execute("DELETE FROM tapo_configs WHERE name = $1", name)
 
 
 async def build_db(db_cfg):

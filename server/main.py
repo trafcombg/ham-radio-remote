@@ -24,6 +24,7 @@ from server.antenna_switch_manager import AntennaSwitchManager
 from server.db import build_db
 from server.device_registry import watch_devices
 from server.radio_manager import RadioManager
+from server.tapo_manager import TapoManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("server")
@@ -106,6 +107,9 @@ async def main():
     switch_manager = AntennaSwitchManager(db)
     await switch_manager.load_all()
 
+    tapo_manager = TapoManager(db, manager, amp_manager)
+    await tapo_manager.load_all()
+
     admin_app.state.pending_update = None
     admin_app.state.apply_update = _apply_pending_update
     admin_app.state.check_for_update_now = _check_for_update_once
@@ -118,6 +122,7 @@ async def main():
     admin_app.state.manager = manager
     admin_app.state.amp_manager = amp_manager
     admin_app.state.switch_manager = switch_manager
+    admin_app.state.tapo_manager = tapo_manager
 
     ports = [(port, "tcp")]
     for radio_cfg in await manager.list_configs():

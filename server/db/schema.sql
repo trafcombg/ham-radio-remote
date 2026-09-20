@@ -162,6 +162,21 @@ CREATE TABLE IF NOT EXISTS antenna_switch_events (
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_input_gain REAL NOT NULL DEFAULT 1.0;
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_output_gain REAL NOT NULL DEFAULT 1.0;
 
+-- TP-Link Tapo smart plug config — local on/off control (P100 etc, via
+-- python-kasa). Optionally linked to a radio or amplifier: TapoBridge's
+-- poll loop keeps the plug powered exactly while that device is running
+-- (see server/tapo_bridge.py) — admin panel only for now, no per-user ACL.
+CREATE TABLE IF NOT EXISTS tapo_configs (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    host TEXT NOT NULL,
+    username TEXT,  -- TP-Link/Tapo account email — used only for the local device handshake
+    password TEXT,
+    linked_radio TEXT,
+    linked_amplifier TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Migration: per-radio audio codec/sample rate settings — a no-op on a
 -- fresh database (the CREATE TABLE above already has them).
 ALTER TABLE radio_configs ADD COLUMN IF NOT EXISTS audio_codec TEXT NOT NULL DEFAULT 'pcm16';

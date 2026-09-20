@@ -43,6 +43,7 @@ from server.port_ranges import (
 )
 from server.radio_manager import RadioBusyError, RadioManager
 from server.serial_sniffer import SnifferSession
+from server.tapo_manager import TapoManager
 from server.web_auth import create_session_cookie, read_session_cookie
 
 log = logging.getLogger("admin_api")
@@ -61,6 +62,10 @@ def get_amp_manager(request: Request) -> AmplifierManager:
 
 def get_switch_manager(request: Request) -> AntennaSwitchManager:
     return request.app.state.switch_manager
+
+
+def get_tapo_manager(request: Request) -> TapoManager:
+    return request.app.state.tapo_manager
 
 
 def get_db(request: Request):
@@ -180,6 +185,19 @@ class AntennaSwitchConfigRequest(BaseModel):
 
 class AntennaSwitchPortRequest(BaseModel):
     port: int
+
+
+class TapoConfigRequest(BaseModel):
+    name: str
+    host: str
+    username: str | None = None  # TP-Link/Tapo account email — local handshake only
+    password: str | None = None
+    linked_radio: str | None = None  # auto on/off matched to whether this radio is active
+    linked_amplifier: str | None = None
+
+
+class TapoPowerRequest(BaseModel):
+    on: bool
 
 
 class UserRequest(BaseModel):
@@ -710,6 +728,53 @@ async def set_client_antenna_switch_port(name: str, body: AntennaSwitchPortReque
         if not allowed:
             raise HTTPException(status_code=403, detail="нямаш права за този суич")
     return await _select_antenna_switch_port(switch_manager, name, body.port, user["username"])
+
+
+@app.get("/api/tapo")
+async def list_tapo(request: Request, admin=Depends(require_admin)):
+    db = get_db(request)
+    tapo_manager = get_tapo_manager(request)
+    configs = await db.list_tapo_configs() if isinstance(db, PostgresDb) else []
+    status = tapo_manager.status()
+    for cfg in configs:
+        cfg["status"] = status.get(cfg["name"])
+    return {"tapo": configs}
+
+
+@app.post("/api/tapo")
+async def create_tapo(body: TapoConfigRequest, request: Request, admin=Depends(require_admin)):
+    tapo_manager = get_tapo_manager(request)
+    await tapo_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.put("/api/tapo/{name}")
+async def update_tapo(name: str, body: TapoConfigRequest, request: Request, admin=Depends(require_admin)):
+    if body.name != name:
+        raise HTTPException(status_code=400, detail="name mismatch")
+    tapo_manager = get_tapo_manager(request)
+    await tapo_manager.reload(body.model_dump())
+    return {"ok": True}
+
+
+@app.delete("/api/tapo/{name}")
+async def delete_tapo(name: str, request: Request, admin=Depends(require_admin)):
+    tapo_manager = get_tapo_manager(request)
+    await tapo_manager.remove(name)
+    return {"ok": True}
+
+
+@app.post("/api/tapo/{name}/power")
+async def set_tapo_power(name: str, body: TapoPowerRequest, request: Request, admin=Depends(require_admin)):
+    tapo_manager = get_tapo_manager(request)
+    bridge = tapo_manager.bridges.get(name)
+    if not bridge:
+        raise HTTPException(status_code=404, detail="контактът не е свързан")
+    if body.on:
+        await bridge.turn_on()
+    else:
+        await bridge.turn_off()
+    return {"ok": True}
 
 
 @app.get("/api/users")
